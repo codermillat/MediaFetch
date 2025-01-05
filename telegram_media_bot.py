@@ -22,7 +22,7 @@ FAILED_REQUESTS = Counter('failed_requests', 'Total failed video requests')
 
 def setup_rabbitmq():
     """Set up RabbitMQ connection and declare queues."""
-    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='172.18.0.4'))
     channel = connection.channel()
     channel.queue_declare(queue='download_tasks', durable=True)
     channel.queue_declare(queue='dead_letter_queue', durable=True)
@@ -42,7 +42,7 @@ async def download_media(update: Update, context: CallbackContext, channel) -> N
     
     ydl_opts = {
         'format': 'best',
-        'outtmpl': '/Users/millat/Desktop/MediaFetch/downloads/%(title)s.%(ext)s',
+        'outtmpl': 'downloaded_media/%(title)s.%(ext)s',
     }
 
     try:
@@ -87,7 +87,7 @@ def main() -> None:
     connection, channel = setup_rabbitmq()
 
     # Create the Updater and pass it your bot's token.
-    application = Application.builder().token("YOUR_BOT_TOKEN").build()
+    application = Application.builder().token("7690911140:AAGGSP8It_Upn7wQR1VFTS2fomEtK5CxdJA").build()
 
     # Register command handlers
     application.add_handler(CommandHandler("start", start))
