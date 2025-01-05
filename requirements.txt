@@ -1,0 +1,6 @@
+yt-dlp
+ffmpeg-python
+tenacity
+pika
+prometheus_client
+python-telegram-bot

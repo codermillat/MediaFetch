@@ -1,0 +1,10 @@
+# Prometheus Configuration
+# This file contains the configuration for Prometheus
+
+global:
+  scrape_interval: 15s  # Default scrape interval
+
+scrape_configs:
+  - job_name: 'telegram_media_bot'
+    static_configs:
+      - targets: ['localhost:8000']  # Target for scraping metrics
