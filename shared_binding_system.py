@@ -197,3 +197,6 @@ class SharedBindingSystem:
                 if username == instagram_username:
                     return telegram_id
             return None
+
+# Create and export the global instance
+shared_binding_system = SharedBindingSystem()
