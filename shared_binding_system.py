@@ -15,10 +15,22 @@ logger = logging.getLogger(__name__)
 class SharedBindingSystem:
     """Centralized binding system for cross-bot communication"""
     
-    def __init__(self, storage_file: str = "/tmp/bindings.json"):
+    def __init__(self, storage_file: str = None):
+        # Use a more persistent location on Heroku
+        if storage_file is None:
+            # Try to use a persistent directory, fallback to /tmp
+            persistent_dirs = ['/app', '/tmp', os.getcwd()]
+            for directory in persistent_dirs:
+                if os.path.exists(directory) and os.access(directory, 'w'):
+                    storage_file = os.path.join(directory, 'bindings.json')
+                    break
+            else:
+                storage_file = '/tmp/bindings.json'
+        
         self.storage_file = storage_file
         self.pending_bindings: Dict[str, Dict] = {}
         self.active_bindings: Dict[int, str] = {}  # telegram_id -> instagram_username
+        logger.info(f"SharedBindingSystem initialized with storage file: {self.storage_file}")
         self._load_bindings()
     
     def _load_bindings(self):
@@ -52,33 +64,49 @@ class SharedBindingSystem:
         """Add a pending binding code"""
         try:
             expires_at = datetime.utcnow() + timedelta(hours=24)
-            self.pending_bindings[code] = {
+            binding_data = {
                 'telegram_id': telegram_id,
                 'instagram_username': username,
                 'expires_at': expires_at.isoformat(),
                 'created_at': datetime.utcnow().isoformat()
             }
+            
+            self.pending_bindings[code] = binding_data
+            logger.info(f"➕ Adding pending binding: Code {code} for Telegram user {telegram_id}")
+            logger.info(f"📊 Binding data: {binding_data}")
+            logger.info(f"📊 Total pending bindings: {len(self.pending_bindings)}")
+            
             self._save_bindings()
-            logger.info(f"Added pending binding: Code {code} for Telegram user {telegram_id}")
+            logger.info(f"💾 Bindings saved to {self.storage_file}")
             return True
         except Exception as e:
-            logger.error(f"Error adding pending binding: {e}")
+            logger.error(f"❌ Error adding pending binding: {e}")
             return False
     
     def process_binding_code(self, code: str, instagram_username: str) -> Dict:
         """Process a binding code sent to Instagram"""
         try:
+            logger.info(f"🔍 Processing binding code: {code} for Instagram user: {instagram_username}")
+            logger.info(f"📊 Current pending bindings: {list(self.pending_bindings.keys())}")
+            logger.info(f"📊 Current active bindings: {self.active_bindings}")
+            
             if code not in self.pending_bindings:
+                logger.warning(f"❌ Code {code} not found in pending bindings")
                 return {
                     'success': False,
                     'error': 'Invalid or expired binding code'
                 }
             
             binding = self.pending_bindings[code]
+            logger.info(f"✅ Found binding: {binding}")
             
             # Check if expired
             expires_at = datetime.fromisoformat(binding['expires_at'])
-            if datetime.utcnow() > expires_at:
+            current_time = datetime.utcnow()
+            logger.info(f"⏰ Code expires at: {expires_at}, current time: {current_time}")
+            
+            if current_time > expires_at:
+                logger.warning(f"⏰ Code {code} has expired")
                 del self.pending_bindings[code]
                 self._save_bindings()
                 return {
@@ -94,7 +122,7 @@ class SharedBindingSystem:
             del self.pending_bindings[code]
             self._save_bindings()
             
-            logger.info(f"Binding activated: Telegram {telegram_id} -> Instagram @{instagram_username}")
+            logger.info(f"🎉 Binding activated: Telegram {telegram_id} -> Instagram @{instagram_username}")
             
             return {
                 'success': True,
@@ -104,7 +132,7 @@ class SharedBindingSystem:
             }
             
         except Exception as e:
-            logger.error(f"Error processing binding code: {e}")
+            logger.error(f"❌ Error processing binding code: {e}")
             return {
                 'success': False,
                 'error': f'Processing error: {str(e)}'
