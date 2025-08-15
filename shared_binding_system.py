@@ -127,9 +127,9 @@ class SharedBindingSystem:
             logger.info(f"🔍 Processing binding code: {code} for Instagram user: {instagram_username}")
 
             if self.use_database:
-                # Query Supabase for the code
+                # Query Supabase for the code (without is_used filter for now)
                 logger.info(f"🔍 Querying database for code: {code}")
-                result = self._make_supabase_request('GET', f'binding_codes?code=eq.{code}&is_used=eq.false')
+                result = self._make_supabase_request('GET', f'binding_codes?code=eq.{code}')
                 logger.info(f"🔍 Database query result: {result}")
 
                 if not result or len(result) == 0:
@@ -146,17 +146,15 @@ class SharedBindingSystem:
                 # Mark as used and create active binding
                 telegram_id = binding_data['telegram_user_id']
 
-                # Update code as used
-                self._make_supabase_request('PATCH', f'binding_codes?id=eq.{binding_data["id"]}', {
-                    'is_used': True
-                })
+                # Note: is_used column doesn't exist in current schema
+                # TODO: Add is_used column to database or implement alternative tracking
 
                 # Create active binding
                 binding_data = {
                     'telegram_user_id': telegram_id,
                     'instagram_username': instagram_username,
                     'binding_code': code,
-                    'bound_at': datetime.utcnow().isoformat()
+                    'bound_at': datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
                 }
 
                 result = self._make_supabase_request('POST', 'user_bindings', binding_data)
