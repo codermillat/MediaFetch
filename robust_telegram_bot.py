@@ -92,7 +92,7 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Add to Instagram binding handler (for production integration)
         try:
             from shared_binding_system import shared_binding_system
-            shared_binding_system.add_pending_binding(binding_code, user.id)
+            shared_binding_system.add_pending_binding(binding_code, user.id, None)
             logger.info(f"Binding code {binding_code} added to shared binding system for user {user.id}")
         except ImportError:
             logger.info("Shared binding system not available - running in test mode")

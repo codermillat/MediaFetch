@@ -21,7 +21,7 @@ class SharedBindingSystem:
             # Try to use a persistent directory, fallback to /tmp
             persistent_dirs = ['/app', '/tmp', os.getcwd()]
             for directory in persistent_dirs:
-                if os.path.exists(directory) and os.access(directory, 'w'):
+                if os.path.exists(directory) and os.access(directory, os.W_OK):
                     storage_file = os.path.join(directory, 'bindings.json')
                     break
             else:
@@ -30,7 +30,7 @@ class SharedBindingSystem:
         self.storage_file = storage_file
         self.pending_bindings: Dict[str, Dict] = {}
         self.active_bindings: Dict[int, str] = {}  # telegram_id -> instagram_username
-        logger.info(f"SharedBindingSystem initialized with storage file: {self.storage_file}")
+        logger.info(f"SharedBindingSystem initialized with storage: {self.storage_file}")
         self._load_bindings()
     
     def _load_bindings(self):
