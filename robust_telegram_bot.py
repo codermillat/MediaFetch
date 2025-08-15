@@ -93,21 +93,38 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             from shared_binding_system import shared_binding_system
             
-            # Check if user already has a pending binding
-            if shared_binding_system.add_pending_binding(binding_code, user.id, None):
+            # Try to add the binding code
+            result = shared_binding_system.add_pending_binding(binding_code, user.id, None)
+            
+            if result['success']:
                 logger.info(f"Binding code {binding_code} added to shared binding system for user {user.id}")
             else:
-                # User already has a pending binding
-                await update.message.reply_text(
-                    "⚠️ **Binding Code Already Exists**\n\n"
-                    "You already have a pending binding code!\n\n"
-                    "**What to do:**\n"
-                    "1. Use your existing code first\n"
-                    "2. Send it to our Instagram bot\n"
-                    "3. Wait for it to expire (24 hours)\n"
-                    "4. Then request a new code\n\n"
-                    "**Current Status:** You can only have one active binding code at a time."
-                )
+                # Handle different error cases
+                error_code = result.get('code', 'UNKNOWN')
+                error_message = result.get('error', 'Unknown error')
+                
+                if error_code == 'ALREADY_BOUND':
+                    await update.message.reply_text(
+                        "✅ **Already Bound!**\n\n"
+                        "Your account is already bound to an Instagram account. Use `/bindings` to see your current status."
+                    )
+                elif error_code == 'PENDING_EXISTS':
+                    await update.message.reply_text(
+                        "⚠️ **Binding Code Already Exists**\n\n"
+                        "You already have a pending binding code. Please use that code or wait for it to expire (24 hours).\n\n"
+                        "Use `/bindings` to see your current status."
+                    )
+                elif error_code == 'RATE_LIMITED':
+                    await update.message.reply_text(
+                        "⏰ **Rate Limited**\n\n"
+                        "Too many binding attempts. Please wait 1 hour before trying again."
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"❌ **Binding Failed**\n\n"
+                        f"Error: {error_message}\n\n"
+                        f"Please try again later or contact support."
+                    )
                 return
                 
         except ImportError:
@@ -416,10 +433,12 @@ def main():
             logger.info("✅ Bot starting...")
             logger.info("✅ Ready to receive messages!")
             
-            # Start the bot
+            # Start the bot with rate limiting
             application.run_polling(
                 drop_pending_updates=True,
-                allowed_updates=Update.ALL_TYPES
+                allowed_updates=Update.ALL_TYPES,
+                poll_interval=2.0,  # Poll every 2 seconds instead of continuously
+                timeout=30  # 30 second timeout for long polling
             )
             
             # If we get here, the bot is running successfully

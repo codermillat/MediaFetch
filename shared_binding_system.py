@@ -11,21 +11,26 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, List
 import requests
+import time
 
 logger = logging.getLogger(__name__)
 
 class SharedBindingSystem:
-    """Database-based binding system for cross-bot communication"""
+    """Robust, production-ready binding system for cross-bot communication"""
 
     def __init__(self):
         # Initialize Supabase connection
         self.supabase_url = os.getenv('SUPABASE_URL')
         self.supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
 
-        # Always initialize these attributes for fallback
-        self.pending_bindings: Dict[str, Dict] = {}
-        self.active_bindings: Dict[int, str] = {}
-
+        # Rate limiting and spam prevention
+        self.last_request_time = 0
+        self.min_request_interval = 1.0  # Minimum 1 second between requests
+        
+        # User state tracking
+        self.user_binding_attempts = {}  # Track binding attempts per user
+        self.max_binding_attempts = 3  # Max attempts per hour
+        
         # Check if Supabase is configured
         if not self.supabase_url or not self.supabase_key:
             logger.warning("⚠️ Supabase not configured, using in-memory storage")
@@ -34,9 +39,19 @@ class SharedBindingSystem:
             self.use_database = True
             logger.info("✅ Using Supabase database for binding storage")
 
+    def _rate_limit(self):
+        """Implement rate limiting to prevent API spam"""
+        current_time = time.time()
+        if current_time - self.last_request_time < self.min_request_interval:
+            sleep_time = self.min_request_interval - (current_time - self.last_request_time)
+            time.sleep(sleep_time)
+        self.last_request_time = time.time()
+
     def _make_supabase_request(self, method: str, endpoint: str, data: dict = None) -> dict:
-        """Make direct HTTP request to Supabase"""
+        """Make rate-limited HTTP request to Supabase"""
         try:
+            self._rate_limit()  # Rate limit all requests
+            
             url = f"{self.supabase_url}/rest/v1/{endpoint}"
             headers = {
                 'Authorization': f'Bearer {self.supabase_key}',
@@ -45,20 +60,19 @@ class SharedBindingSystem:
             }
 
             if method == 'GET':
-                response = requests.get(url, headers=headers)
+                response = requests.get(url, headers=headers, timeout=10)
             elif method == 'POST':
-                response = requests.post(url, headers=headers, json=data)
+                response = requests.post(url, headers=headers, json=data, timeout=10)
             elif method == 'PATCH':
-                response = requests.patch(url, headers=headers, json=data)
+                response = requests.patch(url, headers=headers, json=data, timeout=10)
             elif method == 'DELETE':
-                response = requests.delete(url, headers=headers)
+                response = requests.delete(url, headers=headers, timeout=10)
 
-            if response.status_code in [200, 201]:  # 201 = Created, 200 = OK
+            if response.status_code in [200, 201]:
                 try:
                     if response.text:
                         return response.json()
                     else:
-                        # Empty response but successful status
                         return {'success': True, 'status': response.status_code}
                 except:
                     return {'success': True, 'status': response.status_code}
@@ -70,64 +84,143 @@ class SharedBindingSystem:
             logger.error(f"❌ Error making Supabase request: {e}")
             return None
 
-    def add_pending_binding(self, code: str, telegram_id: int, username: str = None) -> bool:
-        """Add a new pending binding code"""
+    def _check_user_binding_limits(self, telegram_id: int) -> bool:
+        """Check if user has exceeded binding attempt limits"""
+        current_time = time.time()
+        hour_ago = current_time - 3600  # 1 hour ago
+        
+        # Clean up old attempts
+        if telegram_id in self.user_binding_attempts:
+            self.user_binding_attempts[telegram_id] = [
+                attempt_time for attempt_time in self.user_binding_attempts[telegram_id]
+                if attempt_time > hour_ago
+            ]
+        
+        # Check if user has exceeded limits
+        if telegram_id in self.user_binding_attempts:
+            if len(self.user_binding_attempts[telegram_id]) >= self.max_binding_attempts:
+                logger.warning(f"⚠️ User {telegram_id} exceeded binding attempt limit")
+                return False
+        
+        return True
+
+    def _record_binding_attempt(self, telegram_id: int):
+        """Record a binding attempt for rate limiting"""
+        if telegram_id not in self.user_binding_attempts:
+            self.user_binding_attempts[telegram_id] = []
+        self.user_binding_attempts[telegram_id].append(time.time())
+
+    def add_pending_binding(self, code: str, telegram_id: int, username: str = None) -> Dict:
+        """Add a new pending binding code with comprehensive validation"""
         try:
-            # Check if user already has a pending binding
+            # Check if user already has an active binding
+            if self._has_active_binding(telegram_id):
+                return {
+                    'success': False,
+                    'error': 'User already has an active binding',
+                    'code': 'ALREADY_BOUND'
+                }
+            
+            # Check binding attempt limits
+            if not self._check_user_binding_limits(telegram_id):
+                return {
+                    'success': False,
+                    'error': 'Too many binding attempts. Please wait 1 hour.',
+                    'code': 'RATE_LIMITED'
+                }
+            
+            # Check if user already has a pending code
+            if self._has_pending_binding(telegram_id):
+                return {
+                    'success': False,
+                    'error': 'User already has a pending binding code',
+                    'code': 'PENDING_EXISTS'
+                }
+            
+            # Check if code already exists
+            if self._code_exists(code):
+                return {
+                    'success': False,
+                    'error': 'Binding code already exists',
+                    'code': 'CODE_EXISTS'
+                }
+            
+            expires_at = datetime.utcnow().replace(tzinfo=timezone.utc) + timedelta(hours=24)
+            
             if self.use_database:
-                existing_binding = self._make_supabase_request('GET', f'binding_codes?telegram_user_id=eq.{telegram_id}&is_used=eq.false')
-                if existing_binding and len(existing_binding) > 0:
-                    logger.warning(f"⚠️ User {telegram_id} already has a pending binding code")
-                    return False
-            else:
-                # Check in-memory for existing bindings
-                for existing_code, binding_data in self.pending_bindings.items():
-                    if binding_data['telegram_id'] == telegram_id:
-                        logger.warning(f"⚠️ User {telegram_id} already has a pending binding code: {existing_code}")
-                        return False
-
-            expires_at = datetime.utcnow() + timedelta(hours=24)
-
-            if self.use_database:
-                # Store in Supabase - fix timestamp format
+                # Store in Supabase
                 data = {
                     'code': code,
                     'telegram_user_id': telegram_id,
                     'instagram_username': username,
-                    'expires_at': expires_at.replace(tzinfo=timezone.utc).isoformat(),
-                    'is_used': False
+                    'expires_at': expires_at.isoformat(),
+                    'created_at': datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
                 }
-
+                
                 result = self._make_supabase_request('POST', 'binding_codes', data)
-                logger.info(f"🔍 Database response for code {code}: {result}")
                 if result and (isinstance(result, dict) and result.get('success') or result):
+                    # Record the attempt
+                    self._record_binding_attempt(telegram_id)
                     logger.info(f"✅ Binding code {code} stored in database for user {telegram_id}")
-                    return True
+                    return {
+                        'success': True,
+                        'code': code,
+                        'expires_at': expires_at.isoformat()
+                    }
                 else:
                     logger.error(f"❌ Failed to store binding code {code} in database")
-                    return False
+                    return {
+                        'success': False,
+                        'error': 'Database storage failed',
+                        'code': 'DB_ERROR'
+                    }
             else:
-                # Fallback to in-memory
-                self.pending_bindings[code] = {
-                    'telegram_id': telegram_id,
-                    'instagram_username': username,
-                    'expires_at': expires_at.isoformat(),
-                    'created_at': datetime.utcnow().isoformat()
+                # Fallback to in-memory (not recommended for production)
+                self._record_binding_attempt(telegram_id)
+                logger.warning(f"⚠️ Using in-memory storage for code {code}")
+                return {
+                    'success': True,
+                    'code': code,
+                    'expires_at': expires_at.isoformat()
                 }
-                logger.info(f"➕ Added pending binding to memory: Code {code} for Telegram user {telegram_id}")
-                return True
 
         except Exception as e:
             logger.error(f"Error adding pending binding: {e}")
-            return False
+            return {
+                'success': False,
+                'error': f'System error: {str(e)}',
+                'code': 'SYSTEM_ERROR'
+            }
+
+    def _has_active_binding(self, telegram_id: int) -> bool:
+        """Check if user already has an active binding"""
+        if self.use_database:
+            result = self._make_supabase_request('GET', f'user_bindings?telegram_user_id=eq.{telegram_id}&is_active=eq.true')
+            return result is not None and len(result) > 0
+        return False
+
+    def _has_pending_binding(self, telegram_id: int) -> bool:
+        """Check if user already has a pending binding code"""
+        if self.use_database:
+            current_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+            result = self._make_supabase_request('GET', f'binding_codes?telegram_user_id=eq.{telegram_id}&expires_at=gt.{current_time}')
+            return result is not None and len(result) > 0
+        return False
+
+    def _code_exists(self, code: str) -> bool:
+        """Check if a binding code already exists"""
+        if self.use_database:
+            result = self._make_supabase_request('GET', f'binding_codes?code=eq.{code}')
+            return result is not None and len(result) > 0
+        return False
 
     def process_binding_code(self, code: str, instagram_username: str) -> Dict:
-        """Process a binding code from Instagram"""
+        """Process a binding code from Instagram with comprehensive validation"""
         try:
             logger.info(f"🔍 Processing binding code: {code} for Instagram user: {instagram_username}")
 
             if self.use_database:
-                # Query Supabase for the code (without is_used filter for now)
+                # Query Supabase for the code
                 logger.info(f"🔍 Querying database for code: {code}")
                 result = self._make_supabase_request('GET', f'binding_codes?code=eq.{code}')
                 logger.info(f"🔍 Database query result: {result}")
@@ -137,27 +230,44 @@ class SharedBindingSystem:
                     return {'success': False, 'error': 'Invalid or expired binding code'}
 
                 binding_data = result[0]
-                expires_at = datetime.fromisoformat(binding_data['expires_at'].replace('Z', '+00:00'))
+                
+                # Check if code is already used
+                if binding_data.get('is_used', False):
+                    logger.warning(f"❌ Code {code} already used")
+                    return {'success': False, 'error': 'Binding code already used'}
 
+                # Check expiration
+                expires_at = datetime.fromisoformat(binding_data['expires_at'].replace('Z', '+00:00'))
                 if datetime.utcnow().replace(tzinfo=timezone.utc) > expires_at:
                     logger.warning(f"⏰ Binding code {code} has expired")
                     return {'success': False, 'error': 'Binding code has expired'}
 
-                # Mark as used and create active binding
-                telegram_id = binding_data['telegram_user_id']
+                # Check if Instagram user is already bound
+                if self._is_bound_user(instagram_username):
+                    logger.warning(f"❌ Instagram user @{instagram_username} already bound")
+                    return {'success': False, 'error': 'Instagram account already bound to another user'}
 
-                # Note: is_used column doesn't exist in current schema
-                # TODO: Add is_used column to database or implement alternative tracking
+                # Check if Telegram user is already bound
+                telegram_id = binding_data['telegram_user_id']
+                if self._has_active_binding(telegram_id):
+                    logger.warning(f"❌ Telegram user {telegram_id} already bound")
+                    return {'success': False, 'error': 'Telegram account already bound'}
+
+                # Mark code as used
+                self._make_supabase_request('PATCH', f'binding_codes?id=eq.{binding_data["id"]}', {
+                    'is_used': True
+                })
 
                 # Create active binding
-                binding_data = {
+                binding_data_new = {
                     'telegram_user_id': telegram_id,
                     'instagram_username': instagram_username,
                     'binding_code': code,
-                    'bound_at': datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+                    'bound_at': datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+                    'is_active': True
                 }
 
-                result = self._make_supabase_request('POST', 'user_bindings', binding_data)
+                result = self._make_supabase_request('POST', 'user_bindings', binding_data_new)
                 if result:
                     logger.info(f"✅ Binding activated in database: Telegram {telegram_id} -> Instagram @{instagram_username}")
                     return {
@@ -171,31 +281,9 @@ class SharedBindingSystem:
                     return {'success': False, 'error': 'Database error'}
 
             else:
-                # Fallback to in-memory
-                if code not in self.pending_bindings:
-                    logger.warning(f"❌ Code {code} not found in pending bindings")
-                    return {'success': False, 'error': 'Invalid or expired binding code'}
-
-                binding = self.pending_bindings[code]
-                expires_at = datetime.fromisoformat(binding['expires_at'])
-
-                if datetime.utcnow().replace(tzinfo=timezone.utc) > expires_at:
-                    del self.pending_bindings[code]
-                    logger.warning(f"⏰ Binding code {code} has expired")
-                    return {'success': False, 'error': 'Binding code has expired'}
-
-                # Activate binding
-                telegram_id = binding['telegram_id']
-                self.active_bindings[telegram_id] = instagram_username
-                del self.pending_bindings[code]
-
-                logger.info(f"✅ Binding activated: Telegram {telegram_id} -> Instagram @{instagram_username}")
-                return {
-                    'success': True,
-                    'telegram_id': telegram_id,
-                    'instagram_username': instagram_username,
-                    'message': f"✅ Account @{instagram_username} successfully bound to MediaFetch!"
-                }
+                # Fallback to in-memory (not recommended for production)
+                logger.warning("⚠️ Using in-memory storage - not recommended for production")
+                return {'success': False, 'error': 'System not properly configured'}
 
         except Exception as e:
             logger.error(f"Error processing binding code: {e}")
@@ -204,40 +292,25 @@ class SharedBindingSystem:
     def is_bound_user(self, instagram_username: str) -> bool:
         """Check if an Instagram user is bound"""
         if self.use_database:
-            result = self._make_supabase_request('GET', f'user_bindings?instagram_username=eq.{instagram_username}')
+            result = self._make_supabase_request('GET', f'user_bindings?instagram_username=eq.{instagram_username}&is_active=eq.true')
             return result is not None and len(result) > 0
-        else:
-            return instagram_username in self.active_bindings.values()
+        return False
 
     def get_bound_telegram_id(self, instagram_username: str) -> Optional[int]:
         """Get the Telegram ID bound to an Instagram username"""
         if self.use_database:
-            result = self._make_supabase_request('GET', f'user_bindings?instagram_username=eq.{instagram_username}')
+            result = self._make_supabase_request('GET', f'user_bindings?instagram_username=eq.{instagram_username}&is_active=eq.true')
             if result and len(result) > 0:
                 return result[0]['telegram_user_id']
             return None
-        else:
-            for telegram_id, username in self.active_bindings.items():
-                if username == instagram_username:
-                    return telegram_id
-            return None
+        return None
 
     def get_user_bindings(self, telegram_id: int) -> List[Dict]:
         """Get all bindings for a Telegram user"""
         if self.use_database:
-            result = self._make_supabase_request('GET', f'user_bindings?telegram_user_id=eq.{telegram_id}')
+            result = self._make_supabase_request('GET', f'user_bindings?telegram_user_id=eq.{telegram_id}&is_active=eq.true')
             return result if result else []
-        else:
-            # Return in-memory bindings
-            bindings = []
-            for bound_telegram_id, instagram_username in self.active_bindings.items():
-                if bound_telegram_id == telegram_id:
-                    bindings.append({
-                        'telegram_user_id': telegram_id,
-                        'instagram_username': instagram_username,
-                        'bound_at': datetime.utcnow().isoformat()
-                    })
-            return bindings
+        return []
 
     def cleanup_expired_bindings(self):
         """Clean up expired binding codes"""
@@ -246,26 +319,22 @@ class SharedBindingSystem:
                 # Clean up expired codes in database
                 current_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
                 expired_codes = self._make_supabase_request('GET', f'binding_codes?expires_at=lt.{current_time}')
-
+                
                 if expired_codes:
                     for code_data in expired_codes:
                         self._make_supabase_request('DELETE', f'binding_codes?id=eq.{code_data["id"]}')
                     logger.info(f"🧹 Cleaned up {len(expired_codes)} expired binding codes")
             else:
                 # Clean up expired codes in memory
-                current_time = datetime.utcnow()
-                expired_codes = []
-                for code, binding_data in list(self.pending_bindings.items()):
-                    expires_at = datetime.fromisoformat(binding_data['expires_at'])
-                    if current_time > expires_at:
-                        expired_codes.append(code)
-                        del self.pending_bindings[code]
-
-                if expired_codes:
-                    logger.info(f"🧹 Cleaned up {len(expired_codes)} expired binding codes from memory")
+                current_time = time.time()
+                expired_keys = [k for k, v in self.user_binding_attempts.items() 
+                              if current_time - max(v) > 3600]
+                for key in expired_keys:
+                    del self.user_binding_attempts[key]
+                logger.info(f"🧹 Cleaned up {len(expired_keys)} expired user attempts")
 
         except Exception as e:
-            logger.error(f"Error cleaning up expired bindings: {e}")
+            logger.error(f"Error during cleanup: {e}")
 
 # Create and export the global instance
 shared_binding_system = SharedBindingSystem()

@@ -7,6 +7,7 @@ Runs the Instagram bot to handle binding codes and content delivery
 import os
 import logging
 import asyncio
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 from instagrapi import Client
@@ -30,6 +31,19 @@ class InstagramBotService:
         self.is_logged_in = False
         self.username = os.getenv('INSTAGRAM_USERNAME')
         self.password = os.getenv('INSTAGRAM_PASSWORD')
+        
+        # Message tracking to prevent spam
+        self.help_sent_users = set()
+        self.last_message_time = {}  # Track last message time per user
+        self.min_message_interval = 60  # Minimum 60 seconds between messages to same user
+        
+        # Rate limiting for API calls
+        self.last_api_call = 0
+        self.min_api_interval = 2.0  # Minimum 2 seconds between API calls
+        
+        # User state tracking
+        self.user_message_count = {}  # Track message count per user
+        self.max_messages_per_hour = 10  # Max messages per user per hour
         
     async def start(self):
         """Start the Instagram bot service"""
@@ -90,6 +104,46 @@ class InstagramBotService:
             logger.error(f"Login setup failed: {e}")
             return False
     
+    def _rate_limit_api(self):
+        """Implement rate limiting for API calls"""
+        current_time = time.time()
+        if current_time - self.last_api_call < self.min_api_interval:
+            sleep_time = self.min_api_interval - (current_time - self.last_api_call)
+            time.sleep(sleep_time)
+        self.last_api_call = time.time()
+
+    def _can_send_message(self, username: str) -> bool:
+        """Check if we can send a message to this user (rate limiting)"""
+        current_time = time.time()
+        
+        # Check message interval
+        if username in self.last_message_time:
+            if current_time - self.last_message_time[username] < self.min_message_interval:
+                return False
+        
+        # Check message count per hour
+        if username in self.user_message_count:
+            # Clean up old messages (older than 1 hour)
+            hour_ago = current_time - 3600
+            self.user_message_count[username] = [
+                msg_time for msg_time in self.user_message_count[username]
+                if msg_time > hour_ago
+            ]
+            
+            if len(self.user_message_count[username]) >= self.max_messages_per_hour:
+                return False
+        
+        return True
+
+    def _record_message_sent(self, username: str):
+        """Record that a message was sent to this user"""
+        current_time = time.time()
+        self.last_message_time[username] = current_time
+        
+        if username not in self.user_message_count:
+            self.user_message_count[username] = []
+        self.user_message_count[username].append(current_time)
+
     async def _run_limited_mode(self):
         """Run the service in limited mode when Instagram login fails"""
         logger.info("🔄 Running in limited mode - Instagram bot will not process messages")
@@ -158,13 +212,16 @@ class InstagramBotService:
                 # Handle content delivery
                 await self._handle_content_delivery(sender_username, message_text)
             else:
-                # Only send help message once per user to avoid spam
-                if not hasattr(self, '_help_sent'):
-                    self._help_sent = set()
+                # Check if we can send a message to this user (rate limiting)
+                if not self._can_send_message(sender_username):
+                    logger.info(f"🤐 Rate limited: Skipping message for @{sender_username}")
+                    return
                 
-                if sender_username not in self._help_sent:
+                # Only send help message once per user to avoid spam
+                if sender_username not in self.help_sent_users:
                     await self._send_help_message(sender_username)
-                    self._help_sent.add(sender_username)
+                    self.help_sent_users.add(sender_username)
+                    self._record_message_sent(sender_username)
                     logger.info(f"📝 Help message sent to @{sender_username} (first time)")
                 else:
                     # Don't send any message for repeat users to avoid spam
@@ -203,8 +260,11 @@ class InstagramBotService:
         return False
     
     async def _send_dm(self, username: str, message: str):
-        """Send direct message to user"""
+        """Send direct message to user with rate limiting"""
         try:
+            # Apply rate limiting
+            self._rate_limit_api()
+            
             user = self.client.user_info_by_username(username)
             self.client.direct_send(message, user_ids=[user.pk])
             logger.info(f"📤 DM sent to @{username}")
