@@ -41,7 +41,7 @@ jobs:
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       run: |
         sleep 30
-        curl -f ${{ secrets.HEROKU_APP_URL }}/health || exit 1
+        curl -f ${{ secrets.HEROKU_API_URL }}/ || exit 1
         
     - name: Notify deployment status
       if: always()
