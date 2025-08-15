@@ -37,40 +37,73 @@ class InstagramBotService:
         try:
             logger.info("🚀 Starting Instagram Bot Service...")
             
-            # Login to Instagram
-            if await self._login():
+            # Try to login to Instagram
+            login_success = await self._try_login()
+            
+            if login_success:
                 logger.info("✅ Instagram login successful")
-                
                 # Start monitoring DMs
                 await self._monitor_direct_messages()
             else:
-                logger.error("❌ Failed to login to Instagram")
+                logger.warning("⚠️ Instagram login failed - running in limited mode")
+                # Run a simple loop to keep the service alive
+                await self._run_limited_mode()
                 
         except Exception as e:
             logger.error(f"❌ Error starting Instagram bot service: {e}")
+            # Keep the service running even if there's an error
+            await self._run_limited_mode()
     
-    async def _login(self) -> bool:
-        """Login to Instagram"""
+    async def _try_login(self) -> bool:
+        """Try to login to Instagram with error handling"""
         try:
             if not self.username or not self.password:
                 logger.error("Instagram credentials not configured")
                 return False
                 
-            logger.info(f"Logging in as @{self.username}...")
+            logger.info(f"Attempting to login as @{self.username}...")
             
-            # Login
-            self.client.login(self.username, self.password)
-            self.is_logged_in = True
+            # Set up the client to handle challenges better
+            self.client.delay_range = [1, 3]  # Random delay between requests
             
-            # Get user info
-            user = self.client.user_info_by_username(self.username)
-            logger.info(f"Logged in as: {user.full_name} (@{user.username})")
-            
-            return True
-            
+            # Try to login
+            try:
+                self.client.login(self.username, self.password)
+                self.is_logged_in = True
+                
+                # Get user info to confirm login
+                user = self.client.user_info_by_username(self.username)
+                logger.info(f"✅ Logged in as: {user.full_name} (@{user.username})")
+                return True
+                
+            except Exception as login_error:
+                logger.warning(f"Login attempt failed: {login_error}")
+                
+                # Check if it's a challenge/verification issue
+                if "challenge" in str(login_error).lower() or "verification" in str(login_error).lower():
+                    logger.warning("Instagram requires verification/challenge - cannot proceed with automated login")
+                    return False
+                else:
+                    logger.error(f"Login error: {login_error}")
+                    return False
+                    
         except Exception as e:
-            logger.error(f"Login failed: {e}")
+            logger.error(f"Login setup failed: {e}")
             return False
+    
+    async def _run_limited_mode(self):
+        """Run the service in limited mode when Instagram login fails"""
+        logger.info("🔄 Running in limited mode - Instagram bot will not process messages")
+        logger.info("📝 To enable full functionality, complete Instagram verification manually")
+        
+        # Keep the service running
+        while True:
+            try:
+                await asyncio.sleep(60)  # Check every minute
+                logger.info("💓 Instagram bot service heartbeat - limited mode")
+            except Exception as e:
+                logger.error(f"Error in limited mode: {e}")
+                await asyncio.sleep(60)
     
     async def _monitor_direct_messages(self):
         """Monitor direct messages for binding codes and content"""
