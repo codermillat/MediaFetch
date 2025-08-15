@@ -133,8 +133,9 @@ class InstagramBotService:
         try:
             logger.info(f"📨 Message from @{sender_username}: {message_text}")
             
-            # Check if it's a binding code
+            # Check if it's a binding code first
             if self._is_binding_code(message_text):
+                logger.info(f"🔐 Processing binding code: {message_text}")
                 result = shared_binding_system.process_binding_code(message_text, sender_username)
                 
                 if result['success']:
@@ -145,23 +146,52 @@ class InstagramBotService:
                     # Send error message
                     await self._send_dm(sender_username, f"❌ {result['error']}")
                     logger.warning(f"❌ Binding failed: {sender_username} - {result['error']}")
+                return
+            
+            # Check if it's a command
+            if message_text.lower().startswith(('/help', '/start', '/bind', '/commands')):
+                await self._send_help_message(sender_username)
+                return
+            
+            # Check if user is bound
+            if self._is_bound_user(sender_username):
+                # Handle content delivery
+                await self._handle_content_delivery(sender_username, message_text)
             else:
-                # Check if user is bound
-                if self._is_bound_user(sender_username):
-                    # Handle content delivery
-                    await self._handle_content_delivery(sender_username, message_text)
-                else:
-                    # Send help message
+                # Only send help message once per user to avoid spam
+                if not hasattr(self, '_help_sent') or sender_username not in getattr(self, '_help_sent', set()):
                     await self._send_help_message(sender_username)
+                    if not hasattr(self, '_help_sent'):
+                        self._help_sent = set()
+                    self._help_sent.add(sender_username)
+                else:
+                    # Send a shorter message for repeat users
+                    await self._send_dm(sender_username, 
+                        "💡 **Quick Tip:** Send your binding code from Telegram to activate content delivery!")
                     
         except Exception as e:
             logger.error(f"Error processing message: {e}")
+            # Send a generic error message
+            try:
+                await self._send_dm(sender_username, "❌ Sorry, there was an error processing your message. Please try again.")
+            except:
+                pass
     
     def _is_binding_code(self, text: str) -> bool:
         """Check if text looks like a binding code"""
-        # Binding codes are 6-10 characters, alphanumeric
+        # Remove any extra whitespace
+        text = text.strip()
+        
+        # Binding codes are 6-10 characters, alphanumeric, uppercase
         if len(text) >= 6 and len(text) <= 10:
-            return text.isalnum() and text.isupper()
+            # Check if it's all uppercase letters and numbers
+            if text.isalnum() and text.isupper():
+                # Avoid common words that might be mistaken for codes
+                common_words = ['HELP', 'START', 'BIND', 'COMMANDS', 'STATUS', 'INFO', 'FEATURES', 'SUPPORT']
+                if text not in common_words:
+                    logger.info(f"🔍 Detected potential binding code: {text}")
+                    return True
+        
         return False
     
     def _is_bound_user(self, username: str) -> bool:
