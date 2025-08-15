@@ -48,6 +48,8 @@ class SharedBindingSystem:
                 response = requests.get(url, headers=headers)
             elif method == 'POST':
                 response = requests.post(url, headers=headers, json=data)
+            elif method == 'PATCH':
+                response = requests.patch(url, headers=headers, json=data)
             elif method == 'DELETE':
                 response = requests.delete(url, headers=headers)
             
@@ -122,8 +124,7 @@ class SharedBindingSystem:
                 telegram_id = binding_data['telegram_user_id']
                 
                 # Update code as used
-                self._make_supabase_request('POST', 'binding_codes', {
-                    'id': binding_data['id'],
+                self._make_supabase_request('PATCH', f'binding_codes?id=eq.{binding_data["id"]}', {
                     'is_used': True
                 })
                 
