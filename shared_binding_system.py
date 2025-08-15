@@ -8,7 +8,7 @@ Uses Supabase database for true persistence across dyno restarts
 import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, List
 import requests
 
@@ -114,7 +114,7 @@ class SharedBindingSystem:
                 binding_data = result[0]
                 expires_at = datetime.fromisoformat(binding_data['expires_at'].replace('Z', '+00:00'))
                 
-                if datetime.utcnow() > expires_at:
+                if datetime.utcnow().replace(tzinfo=timezone.utc) > expires_at:
                     logger.warning(f"⏰ Binding code {code} has expired")
                     return {'success': False, 'error': 'Binding code has expired'}
                 
@@ -157,7 +157,7 @@ class SharedBindingSystem:
                 binding = self.pending_bindings[code]
                 expires_at = datetime.fromisoformat(binding['expires_at'])
                 
-                if datetime.utcnow() > expires_at:
+                if datetime.utcnow().replace(tzinfo=timezone.utc) > expires_at:
                     del self.pending_bindings[code]
                     logger.warning(f"⏰ Binding code {code} has expired")
                     return {'success': False, 'error': 'Binding code has expired'}
