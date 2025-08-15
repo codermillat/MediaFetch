@@ -99,7 +99,7 @@ class SharedBindingSystem:
     def process_binding_code(self, code: str, instagram_username: str) -> Dict:
         """Process a binding code from Instagram"""
         try:
-            logger.info(f"�� Processing binding code: {code} for Instagram user: {instagram_username}")
+            logger.info(f"🔍 Processing binding code: {code} for Instagram user: {instagram_username}")
             
             if self.use_database:
                 # Query Supabase for the code

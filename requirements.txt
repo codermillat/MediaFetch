@@ -9,6 +9,7 @@ gunicorn==21.2.0
 
 # HTTP client for Instagram API
 aiohttp==3.9.1
+requests==2.31.0
 
 # Instagram 3rd party client for DM access
 instagrapi==2.0.0
