@@ -1,0 +1,76 @@
+{
+  "name": "MediaFetch Telegram Bot",
+  "description": "A production-ready Telegram bot for downloading media from various platforms",
+  "repository": "https://github.com/codermillat/MediaFetch",
+  "logo": "https://node-js-sample.herokuapp.com/node.png",
+  "keywords": ["telegram", "bot", "media", "download", "youtube", "tiktok", "instagram"],
+  "env": {
+    "TELEGRAM_BOT_TOKEN": {
+      "description": "Your Telegram bot token from @BotFather",
+      "required": true
+    },
+    "ENVIRONMENT": {
+      "description": "Application environment",
+      "value": "production",
+      "required": false
+    },
+    "LOG_LEVEL": {
+      "description": "Logging level",
+      "value": "INFO",
+      "required": false
+    },
+    "MAX_FILE_SIZE": {
+      "description": "Maximum file size in bytes (default: 50MB)",
+      "value": "52428800",
+      "required": false
+    },
+    "DOWNLOAD_TIMEOUT": {
+      "description": "Download timeout in seconds",
+      "value": "300",
+      "required": false
+    },
+    "MAX_RETRIES": {
+      "description": "Maximum download retries",
+      "value": "3",
+      "required": false
+    },
+    "CLEANUP_INTERVAL": {
+      "description": "Cleanup interval in seconds",
+      "value": "300",
+      "required": false
+    },
+    "HEALTH_CHECK_INTERVAL": {
+      "description": "Health check interval in seconds",
+      "value": "30",
+      "required": false
+    },
+    "RATE_LIMIT_PER_USER": {
+      "description": "Rate limit per user per hour",
+      "value": "10",
+      "required": false
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    },
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "addons": [
+    {
+      "plan": "heroku-redis:mini"
+    }
+  ],
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    },
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-ffmpeg-latest"
+    }
+  ]
+}
