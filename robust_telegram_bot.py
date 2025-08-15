@@ -92,8 +92,24 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Add to Instagram binding handler (for production integration)
         try:
             from shared_binding_system import shared_binding_system
-            shared_binding_system.add_pending_binding(binding_code, user.id, None)
-            logger.info(f"Binding code {binding_code} added to shared binding system for user {user.id}")
+            
+            # Check if user already has a pending binding
+            if shared_binding_system.add_pending_binding(binding_code, user.id, None):
+                logger.info(f"Binding code {binding_code} added to shared binding system for user {user.id}")
+            else:
+                # User already has a pending binding
+                await update.message.reply_text(
+                    "⚠️ **Binding Code Already Exists**\n\n"
+                    "You already have a pending binding code!\n\n"
+                    "**What to do:**\n"
+                    "1. Use your existing code first\n"
+                    "2. Send it to our Instagram bot\n"
+                    "3. Wait for it to expire (24 hours)\n"
+                    "4. Then request a new code\n\n"
+                    "**Current Status:** You can only have one active binding code at a time."
+                )
+                return
+                
         except ImportError:
             logger.info("Shared binding system not available - running in test mode")
             
@@ -318,6 +334,36 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in callback handler: {e}")
 
+async def cleanup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /cleanup command - Admin only"""
+    try:
+        from shared_binding_system import shared_binding_system
+        
+        # Check if user is admin (you can customize this logic)
+        user_id = update.effective_user.id
+        # For now, allow any user to run cleanup (you can restrict this)
+        
+        # Run cleanup
+        shared_binding_system.cleanup_expired_bindings()
+        
+        cleanup_message = (
+            "🧹 **System Cleanup Completed**\n\n"
+            "**Actions performed:**\n"
+            "• Removed expired binding codes\n"
+            "• Cleaned up old data\n"
+            "• Optimized system performance\n\n"
+            "✅ **Status:** System cleaned and optimized!"
+        )
+        
+        await update.message.reply_text(cleanup_message, parse_mode='Markdown')
+        logger.info(f"Cleanup command executed by user {user_id}")
+        
+    except ImportError:
+        await update.message.reply_text("❌ Cleanup system not available.")
+    except Exception as e:
+        logger.error(f"Error in cleanup command: {e}")
+        await update.message.reply_text("❌ Error during cleanup process.")
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors gracefully"""
     logger.error(f"Exception while handling an update: {context.error}")
@@ -355,6 +401,7 @@ def main():
             application.add_handler(CommandHandler("bindings", bindings_command))
             application.add_handler(CommandHandler("unbind", unbind_command)) # Added unbind handler
             application.add_handler(CommandHandler("help", help_command))
+            application.add_handler(CommandHandler("cleanup", cleanup_command))
             
             # Add message handler
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

@@ -159,15 +159,16 @@ class InstagramBotService:
                 await self._handle_content_delivery(sender_username, message_text)
             else:
                 # Only send help message once per user to avoid spam
-                if not hasattr(self, '_help_sent') or sender_username not in getattr(self, '_help_sent', set()):
+                if not hasattr(self, '_help_sent'):
+                    self._help_sent = set()
+                
+                if sender_username not in self._help_sent:
                     await self._send_help_message(sender_username)
-                    if not hasattr(self, '_help_sent'):
-                        self._help_sent = set()
                     self._help_sent.add(sender_username)
+                    logger.info(f"📝 Help message sent to @{sender_username} (first time)")
                 else:
-                    # Send a shorter message for repeat users
-                    await self._send_dm(sender_username, 
-                        "💡 **Quick Tip:** Send your binding code from Telegram to activate content delivery!")
+                    # Don't send any message for repeat users to avoid spam
+                    logger.info(f"🤐 Skipping message for @{sender_username} (already sent help)")
                     
         except Exception as e:
             logger.error(f"Error processing message: {e}")

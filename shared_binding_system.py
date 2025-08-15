@@ -66,6 +66,19 @@ class SharedBindingSystem:
     def add_pending_binding(self, code: str, telegram_id: int, username: str = None) -> bool:
         """Add a new pending binding code"""
         try:
+            # Check if user already has a pending binding
+            if self.use_database:
+                existing_binding = self._make_supabase_request('GET', f'binding_codes?telegram_user_id=eq.{telegram_id}&is_used=eq.false')
+                if existing_binding and len(existing_binding) > 0:
+                    logger.warning(f"⚠️ User {telegram_id} already has a pending binding code")
+                    return False
+            else:
+                # Check in-memory for existing bindings
+                for existing_code, binding_data in self.pending_bindings.items():
+                    if binding_data['telegram_id'] == telegram_id:
+                        logger.warning(f"⚠️ User {telegram_id} already has a pending binding code: {existing_code}")
+                        return False
+            
             expires_at = datetime.utcnow() + timedelta(hours=24)
             
             if self.use_database:
@@ -128,6 +141,18 @@ class SharedBindingSystem:
                     'is_used': True
                 })
                 
+                # Check if user is already bound to prevent duplicates
+                existing_binding = self._make_supabase_request('GET', f'user_bindings?telegram_user_id=eq.{telegram_id}')
+                if existing_binding and len(existing_binding) > 0:
+                    logger.warning(f"⚠️ User {telegram_id} is already bound to Instagram")
+                    return {'success': False, 'error': 'User is already bound to another Instagram account'}
+                
+                # Check if Instagram username is already bound to prevent duplicates
+                existing_instagram = self._make_supabase_request('GET', f'user_bindings?instagram_username=eq.{instagram_username}')
+                if existing_instagram and len(existing_instagram) > 0:
+                    logger.warning(f"⚠️ Instagram @{instagram_username} is already bound to another user")
+                    return {'success': False, 'error': 'Instagram account is already bound to another user'}
+                
                 # Create active binding
                 binding_data = {
                     'telegram_user_id': telegram_id,
@@ -141,6 +166,7 @@ class SharedBindingSystem:
                     logger.info(f"✅ Binding activated in database: Telegram {telegram_id} -> Instagram @{instagram_username}")
                     return {
                         'success': True,
+                        'telegram_id': telegram_id,
                         'telegram_id': telegram_id,
                         'instagram_username': instagram_username,
                         'message': f"✅ Account @{instagram_username} successfully bound to MediaFetch!"
@@ -200,6 +226,54 @@ class SharedBindingSystem:
                 if username == instagram_username:
                     return telegram_id
             return None
+    
+    def get_user_bindings(self, telegram_user_id: int) -> List[str]:
+        """Get all Instagram usernames bound to a Telegram user"""
+        try:
+            if self.use_database:
+                result = self._make_supabase_request('GET', f'user_bindings?telegram_user_id=eq.{telegram_user_id}&is_active=eq.true')
+                if result:
+                    return [binding['instagram_username'] for binding in result]
+                return []
+            else:
+                # Fallback to in-memory
+                if telegram_user_id in self.active_bindings:
+                    return [self.active_bindings[telegram_user_id]]
+                return []
+        except Exception as e:
+            logger.error(f"Error getting user bindings: {e}")
+            return []
+
+    def cleanup_expired_bindings(self):
+        """Clean up expired binding codes"""
+        try:
+            if self.use_database:
+                # Clean up expired codes in database
+                current_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+                expired_codes = self._make_supabase_request('GET', f'binding_codes?expires_at=lt.{current_time}')
+                
+                if expired_codes:
+                    for code_data in expired_codes:
+                        self._make_supabase_request('DELETE', f'binding_codes?id=eq.{code_data["id"]}')
+                    logger.info(f"🧹 Cleaned up {len(expired_codes)} expired binding codes")
+            else:
+                # Clean up expired codes in memory
+                current_time = datetime.utcnow()
+                expired_codes = []
+                
+                for code, binding_data in self.pending_bindings.items():
+                    expires_at = datetime.fromisoformat(binding_data['expires_at'])
+                    if current_time > expires_at:
+                        expired_codes.append(code)
+                
+                for code in expired_codes:
+                    del self.pending_bindings[code]
+                
+                if expired_codes:
+                    logger.info(f"🧹 Cleaned up {len(expired_codes)} expired binding codes from memory")
+                    
+        except Exception as e:
+            logger.error(f"Error cleaning up expired bindings: {e}")
 
 # Create and export the global instance
 shared_binding_system = SharedBindingSystem()
