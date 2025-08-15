@@ -22,11 +22,13 @@ class SharedBindingSystem:
         self.supabase_url = os.getenv('SUPABASE_URL')
         self.supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
         
-        # Fallback to in-memory if Supabase not configured
+        # Always initialize these attributes for fallback
+        self.pending_bindings: Dict[str, Dict] = {}
+        self.active_bindings: Dict[int, str] = {}
+        
+        # Check if Supabase is configured
         if not self.supabase_url or not self.supabase_key:
             logger.warning("⚠️ Supabase not configured, using in-memory storage")
-            self.pending_bindings: Dict[str, Dict] = {}
-            self.active_bindings: Dict[int, str] = {}
             self.use_database = False
         else:
             self.use_database = True
