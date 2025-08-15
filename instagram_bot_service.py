@@ -10,7 +10,6 @@ import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from instagrapi import Client
-from instagrapi.types import Message
 from instagram_binding_handler import InstagramBindingHandler
 
 # Load environment variables

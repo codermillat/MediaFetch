@@ -29,19 +29,22 @@ jobs:
         python -m pytest tests/ -v
         
     - name: Deploy to Heroku
-      uses: akhileshns/heroku-deploy@v3.12.14
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      with:
-        heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
-        heroku_app_name: ${{ secrets.HEROKU_APP_NAME }}
-        heroku_email: ${{ secrets.HEROKU_EMAIL }}
-        branch: "HEAD:main"
+      run: |
+        # Install Heroku CLI
+        curl https://cli-assets.heroku.com/install.sh | sh
+        
+        # Add Heroku remote
+        heroku git:remote -a ${{ secrets.HEROKU_APP_NAME }}
+        
+        # Push to Heroku
+        git push heroku HEAD:main
         
     - name: Run production health check
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       run: |
         sleep 30
-        curl -f ${{ secrets.HEROKU_API_URL }}/ || exit 1
+        curl -f https://${{ secrets.HEROKU_APP_NAME }}.herokuapp.com/ || exit 1
         
     - name: Notify deployment status
       if: always()
