@@ -53,11 +53,18 @@ class SharedBindingSystem:
             elif method == 'DELETE':
                 response = requests.delete(url, headers=headers)
             
-            if response.status_code == 200:
-                return response.json()
-            else:
-                logger.error(f"❌ Supabase request failed: {response.status_code} - {response.text}")
-                return None
+                            if response.status_code in [200, 201]:  # 201 = Created, 200 = OK
+                    try:
+                        if response.text:
+                            return response.json()
+                        else:
+                            # Empty response but successful status
+                            return {'success': True, 'status': response.status_code}
+                    except:
+                        return {'success': True, 'status': response.status_code}
+                else:
+                    logger.error(f"❌ Supabase request failed: {response.status_code} - {response.text}")
+                    return None
                 
         except Exception as e:
             logger.error(f"❌ Error making Supabase request: {e}")
@@ -79,20 +86,21 @@ class SharedBindingSystem:
                         logger.warning(f"⚠️ User {telegram_id} already has a pending binding code: {existing_code}")
                         return False
             
-            expires_at = datetime.utcnow() + timedelta(hours=24)
-            
-            if self.use_database:
-                # Store in Supabase
-                data = {
-                    'code': code,
-                    'telegram_user_id': telegram_id,
-                    'instagram_username': username,
-                    'expires_at': expires_at.isoformat(),
-                    'is_used': False
-                }
+                                    expires_at = datetime.utcnow() + timedelta(hours=24)
+                        
+                        if self.use_database:
+                            # Store in Supabase - fix timestamp format
+                            data = {
+                                'code': code,
+                                'telegram_user_id': telegram_id,
+                                'instagram_username': username,
+                                'expires_at': expires_at.replace(tzinfo=timezone.utc).isoformat(),
+                                'is_used': False
+                            }
                 
                 result = self._make_supabase_request('POST', 'binding_codes', data)
-                if result:
+                logger.info(f"🔍 Database response for code {code}: {result}")
+                if result and (isinstance(result, dict) and result.get('success') or result):
                     logger.info(f"✅ Binding code {code} stored in database for user {telegram_id}")
                     return True
                 else:
@@ -118,9 +126,11 @@ class SharedBindingSystem:
         try:
             logger.info(f"🔍 Processing binding code: {code} for Instagram user: {instagram_username}")
             
-            if self.use_database:
-                # Query Supabase for the code
-                result = self._make_supabase_request('GET', f'binding_codes?code=eq.{code}&is_used=eq.false')
+                                    if self.use_database:
+                            # Query Supabase for the code
+                            logger.info(f"🔍 Querying database for code: {code}")
+                            result = self._make_supabase_request('GET', f'binding_codes?code=eq.{code}&is_used=eq.false')
+                            logger.info(f"🔍 Database query result: {result}")
                 
                 if not result or len(result) == 0:
                     logger.warning(f"❌ Code {code} not found in database")
