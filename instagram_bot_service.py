@@ -10,7 +10,7 @@ import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from instagrapi import Client
-from instagram_binding_handler import InstagramBindingHandler
+from shared_binding_system import shared_binding_system
 
 # Load environment variables
 load_dotenv()
@@ -27,7 +27,6 @@ class InstagramBotService:
     
     def __init__(self):
         self.client = Client()
-        self.binding_handler = InstagramBindingHandler()
         self.is_logged_in = False
         self.username = os.getenv('INSTAGRAM_USERNAME')
         self.password = os.getenv('INSTAGRAM_PASSWORD')
@@ -136,7 +135,7 @@ class InstagramBotService:
             
             # Check if it's a binding code
             if self._is_binding_code(message_text):
-                result = self.binding_handler.process_binding_code(message_text, sender_username)
+                result = shared_binding_system.process_binding_code(message_text, sender_username)
                 
                 if result['success']:
                     # Send success message
@@ -167,7 +166,7 @@ class InstagramBotService:
     
     def _is_bound_user(self, username: str) -> bool:
         """Check if Instagram user is bound to any Telegram account"""
-        for telegram_id, instagram_user in self.binding_handler.active_bindings.items():
+        for telegram_id, instagram_user in shared_binding_system.active_bindings.items():
             if instagram_user == username:
                 return True
         return False
@@ -199,7 +198,7 @@ class InstagramBotService:
         try:
             # Find bound Telegram user
             telegram_id = None
-            for tid, insta_user in self.binding_handler.active_bindings.items():
+            for tid, insta_user in shared_binding_system.active_bindings.items():
                 if insta_user == username:
                     telegram_id = tid
                     break

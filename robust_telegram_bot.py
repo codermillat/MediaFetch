@@ -91,30 +91,134 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Add to Instagram binding handler (for production integration)
         try:
-            from instagram_binding_handler import binding_handler
-            binding_handler.add_pending_binding(binding_code, user.id)
-            logger.info(f"Binding code {binding_code} added to Instagram handler for user {user.id}")
+            from shared_binding_system import shared_binding_system
+            shared_binding_system.add_pending_binding(binding_code, user.id)
+            logger.info(f"Binding code {binding_code} added to shared binding system for user {user.id}")
         except ImportError:
-            logger.info("Instagram binding handler not available - running in test mode")
+            logger.info("Shared binding system not available - running in test mode")
             
     except Exception as e:
         logger.error(f"Error in bind command: {e}")
 
 async def bindings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /bindings command"""
-    bindings_message = (
-        "📱 **Your Active Bindings**\n\n"
-        "**No active bindings found.**\n\n"
-        "To create a binding:\n"
-        "• Use `/bind` to get your code\n"
-        "• Send code to Instagram bot\n"
-        "• Enjoy automatic content delivery!"
-    )
-    
     try:
+        from shared_binding_system import shared_binding_system
+        user_id = update.effective_user.id
+        bindings = shared_binding_system.get_user_bindings(user_id)
+        
+        if bindings:
+            bindings_list = "\n".join([f"• @{username}" for username in bindings])
+            bindings_message = (
+                f"📱 **Your Active Bindings**\n\n"
+                f"**Found {len(bindings)} active binding(s):**\n"
+                f"{bindings_list}\n\n"
+                "✅ **Status:** Your Instagram account(s) are bound!\n"
+                "📦 **Content Delivery:** Active - Instagram content will be sent here automatically!\n\n"
+                "**To add more bindings:**\n"
+                "• Use `/bind` to get a new code\n"
+                "• Send code to Instagram bot\n\n"
+                "**To remove binding:**\n"
+                "• Use `/unbind @username`"
+            )
+        else:
+            bindings_message = (
+                "📱 **Your Active Bindings**\n\n"
+                "**No active bindings found.**\n\n"
+                "To create a binding:\n"
+                "• Use `/bind` to get your code\n"
+                "• Send code to Instagram bot\n"
+                "• Enjoy automatic content delivery!"
+            )
+        
+        await update.message.reply_text(bindings_message, parse_mode='Markdown')
+        
+    except ImportError:
+        # Fallback if shared system not available
+        bindings_message = (
+            "📱 **Your Active Bindings**\n\n"
+            "**No active bindings found.**\n\n"
+            "To create a binding:\n"
+            "• Use `/bind` to get your code\n"
+            "• Send code to Instagram bot\n"
+            "• Enjoy automatic content delivery!"
+        )
         await update.message.reply_text(bindings_message, parse_mode='Markdown')
     except Exception as e:
         logger.error(f"Error in bindings command: {e}")
+        await update.message.reply_text("❌ Error retrieving bindings. Please try again later.")
+
+async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /unbind command"""
+    try:
+        from shared_binding_system import shared_binding_system
+        user_id = update.effective_user.id
+        
+        # Check if user has any bindings
+        current_bindings = shared_binding_system.get_user_bindings(user_id)
+        
+        if not current_bindings:
+            await update.message.reply_text(
+                "📱 **No Bindings to Remove**\n\n"
+                "You don't have any active Instagram bindings.\n\n"
+                "Use `/bind` to create a new binding first!"
+            )
+            return
+        
+        # If no username specified, show current bindings
+        if not context.args:
+            bindings_list = "\n".join([f"• @{username}" for username in current_bindings])
+            await update.message.reply_text(
+                f"📱 **Your Current Bindings**\n\n"
+                f"{bindings_list}\n\n"
+                "**To remove a binding:**\n"
+                "• `/unbind @username` - Remove specific binding\n"
+                "• `/unbind all` - Remove all bindings"
+            )
+            return
+        
+        target_username = context.args[0]
+        
+        # Handle "all" case
+        if target_username.lower() == "all":
+            removed_count = 0
+            for username in current_bindings:
+                if shared_binding_system.remove_binding(user_id, username):
+                    removed_count += 1
+            
+            await update.message.reply_text(
+                f"🗑️ **Bindings Removed**\n\n"
+                f"Successfully removed {removed_count} binding(s).\n\n"
+                "Use `/bind` to create new bindings when needed!"
+            )
+            return
+        
+        # Remove specific binding
+        if target_username.startswith('@'):
+            target_username = target_username[1:]  # Remove @ symbol
+        
+        if shared_binding_system.remove_binding(user_id, target_username):
+            await update.message.reply_text(
+                f"✅ **Binding Removed**\n\n"
+                f"Successfully removed binding with @{target_username}.\n\n"
+                "Use `/bind` to create a new binding if needed!"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ **Binding Not Found**\n\n"
+                f"No binding found with @{target_username}.\n\n"
+                "Use `/bindings` to see your current bindings."
+            )
+            
+    except ImportError:
+        await update.message.reply_text(
+            "❌ **Service Unavailable**\n\n"
+            "The binding service is currently unavailable.\n"
+            "Please try again later."
+        )
+    except Exception as e:
+        logger.error(f"Error in unbind command: {e}")
+        await update.message.reply_text("❌ Error processing unbind request. Please try again later.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
@@ -249,6 +353,7 @@ def main():
             application.add_handler(CommandHandler("start", start_command))
             application.add_handler(CommandHandler("bind", bind_command))
             application.add_handler(CommandHandler("bindings", bindings_command))
+            application.add_handler(CommandHandler("unbind", unbind_command)) # Added unbind handler
             application.add_handler(CommandHandler("help", help_command))
             
             # Add message handler
