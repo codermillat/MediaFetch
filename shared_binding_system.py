@@ -16,49 +16,13 @@ class SharedBindingSystem:
     """Centralized binding system for cross-bot communication"""
     
     def __init__(self, storage_file: str = None):
-        # Use a more persistent location on Heroku
-        if storage_file is None:
-            # Try to use a persistent directory, fallback to /tmp
-            persistent_dirs = ['/app', '/tmp', os.getcwd()]
-            for directory in persistent_dirs:
-                if os.path.exists(directory) and os.access(directory, os.W_OK):
-                    storage_file = os.path.join(directory, 'bindings.json')
-                    break
-            else:
-                storage_file = '/tmp/bindings.json'
-        
-        self.storage_file = storage_file
+        # For now, use in-memory storage to avoid file sharing issues
+        # In production, this should be replaced with a database
         self.pending_bindings: Dict[str, Dict] = {}
         self.active_bindings: Dict[int, str] = {}  # telegram_id -> instagram_username
-        logger.info(f"SharedBindingSystem initialized with storage: {self.storage_file}")
-        self._load_bindings()
-    
-    def _load_bindings(self):
-        """Load bindings from storage file"""
-        try:
-            if os.path.exists(self.storage_file):
-                with open(self.storage_file, 'r') as f:
-                    data = json.load(f)
-                    self.pending_bindings = data.get('pending', {})
-                    self.active_bindings = data.get('active', {})
-                logger.info(f"Loaded {len(self.pending_bindings)} pending and {len(self.active_bindings)} active bindings")
-        except Exception as e:
-            logger.error(f"Error loading bindings: {e}")
-            self.pending_bindings = {}
-            self.active_bindings = {}
-    
-    def _save_bindings(self):
-        """Save bindings to storage file"""
-        try:
-            data = {
-                'pending': self.pending_bindings,
-                'active': self.active_bindings,
-                'last_updated': datetime.utcnow().isoformat()
-            }
-            with open(self.storage_file, 'w') as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving bindings: {e}")
+        
+        logger.info(f"SharedBindingSystem initialized with in-memory storage")
+        logger.info(f"📊 Initial state: {len(self.pending_bindings)} pending, {len(self.active_bindings)} active bindings")
     
     def add_pending_binding(self, code: str, telegram_id: int, username: str = None) -> bool:
         """Add a pending binding code"""
@@ -75,12 +39,11 @@ class SharedBindingSystem:
             logger.info(f"➕ Adding pending binding: Code {code} for Telegram user {telegram_id}")
             logger.info(f"📊 Binding data: {binding_data}")
             logger.info(f"📊 Total pending bindings: {len(self.pending_bindings)}")
+            logger.info(f"📊 All pending codes: {list(self.pending_bindings.keys())}")
             
-            self._save_bindings()
-            logger.info(f"💾 Bindings saved to {self.storage_file}")
             return True
         except Exception as e:
-            logger.error(f"❌ Error adding pending binding: {e}")
+            logger.error(f"Error adding pending binding: {e}")
             return False
     
     def process_binding_code(self, code: str, instagram_username: str) -> Dict:
@@ -102,13 +65,9 @@ class SharedBindingSystem:
             
             # Check if expired
             expires_at = datetime.fromisoformat(binding['expires_at'])
-            current_time = datetime.utcnow()
-            logger.info(f"⏰ Code expires at: {expires_at}, current time: {current_time}")
-            
-            if current_time > expires_at:
-                logger.warning(f"⏰ Code {code} has expired")
+            if datetime.utcnow() > expires_at:
                 del self.pending_bindings[code]
-                self._save_bindings()
+                logger.warning(f"⏰ Binding code {code} has expired")
                 return {
                     'success': False,
                     'error': 'Binding code has expired'
@@ -120,9 +79,9 @@ class SharedBindingSystem:
             
             # Remove from pending
             del self.pending_bindings[code]
-            self._save_bindings()
             
-            logger.info(f"🎉 Binding activated: Telegram {telegram_id} -> Instagram @{instagram_username}")
+            logger.info(f"✅ Binding activated: Telegram {telegram_id} -> Instagram @{instagram_username}")
+            logger.info(f"📊 Updated state: {len(self.pending_bindings)} pending, {len(self.active_bindings)} active")
             
             return {
                 'success': True,
@@ -132,7 +91,7 @@ class SharedBindingSystem:
             }
             
         except Exception as e:
-            logger.error(f"❌ Error processing binding code: {e}")
+            logger.error(f"Error processing binding code: {e}")
             return {
                 'success': False,
                 'error': f'Processing error: {str(e)}'
@@ -150,8 +109,7 @@ class SharedBindingSystem:
             if telegram_id in self.active_bindings:
                 if instagram_username is None or self.active_bindings[telegram_id] == instagram_username:
                     del self.active_bindings[telegram_id]
-                    self._save_bindings()
-                    logger.info(f"Binding removed for Telegram user {telegram_id}")
+                    logger.info(f"🗑️ Binding removed for Telegram user {telegram_id}")
                     return True
             return False
         except Exception as e:
@@ -171,10 +129,10 @@ class SharedBindingSystem:
             
             for code in expired_codes:
                 del self.pending_bindings[code]
-                logger.info(f"Removed expired binding code: {code}")
+                logger.info(f"⏰ Removed expired binding code: {code}")
             
             if expired_codes:
-                self._save_bindings()
+                logger.info(f"🧹 Cleanup completed: removed {len(expired_codes)} expired codes")
                 
         except Exception as e:
             logger.error(f"Error cleaning up expired bindings: {e}")
@@ -191,6 +149,15 @@ class SharedBindingSystem:
         binding = self.pending_bindings[code]
         expires_at = datetime.fromisoformat(binding['expires_at'])
         return datetime.utcnow() <= expires_at
+    
+    def get_status(self) -> Dict:
+        """Get current system status for debugging"""
+        return {
+            'pending_count': len(self.pending_bindings),
+            'active_count': len(self.active_bindings),
+            'pending_codes': list(self.pending_bindings.keys()),
+            'active_bindings': self.active_bindings.copy()
+        }
 
 # Create a global instance
 shared_binding_system = SharedBindingSystem()
