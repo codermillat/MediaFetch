@@ -5,17 +5,38 @@
   "logo": "https://node-js-sample.herokuapp.com/node.png",
   "keywords": ["telegram", "bot", "media", "download", "youtube", "tiktok", "instagram"],
   "env": {
+    "ENVIRONMENT": {
+      "description": "Environment (production/development)",
+      "value": "production",
+      "required": false
+    },
     "TELEGRAM_BOT_TOKEN": {
       "description": "Your Telegram bot token from @BotFather",
       "required": true
     },
-    "ENVIRONMENT": {
-      "description": "Application environment",
-      "value": "production",
+    "SUPABASE_URL": {
+      "description": "Your Supabase project URL",
+      "required": true
+    },
+    "SUPABASE_ANON_KEY": {
+      "description": "Your Supabase anonymous key",
+      "required": true
+    },
+    "SUPABASE_SERVICE_ROLE_KEY": {
+      "description": "Your Supabase service role key",
+      "required": true
+    },
+    "INSTAGRAM_USERNAME": {
+      "description": "Instagram bot username",
+      "value": "mediafetchbot",
       "required": false
     },
+    "INSTAGRAM_PASSWORD": {
+      "description": "Instagram bot password",
+      "required": true
+    },
     "LOG_LEVEL": {
-      "description": "Logging level",
+      "description": "Logging level (DEBUG/INFO/WARNING/ERROR)",
       "value": "INFO",
       "required": false
     },
@@ -48,21 +69,38 @@
       "description": "Rate limit per user per hour",
       "value": "10",
       "required": false
+    },
+    "SECRET_KEY": {
+      "description": "Secret key for Flask sessions",
+      "generator": "secret",
+      "required": false
     }
   },
   "formation": {
     "web": {
       "quantity": 1,
-      "size": "basic"
+      "size": "basic",
+      "description": "Web server for health checks and metrics"
     },
     "worker": {
       "quantity": 1,
-      "size": "basic"
+      "size": "basic",
+      "description": "Background worker for file processing"
+    },
+    "telegram": {
+      "quantity": 1,
+      "size": "basic",
+      "description": "Telegram bot service"
     }
   },
   "addons": [
     {
-      "plan": "heroku-redis:mini"
+      "plan": "heroku-postgresql:mini",
+      "as": "DATABASE"
+    },
+    {
+      "plan": "papertrail:choklad",
+      "as": "LOGGING"
     }
   ],
   "buildpacks": [
@@ -70,7 +108,10 @@
       "url": "heroku/python"
     },
     {
-      "url": "https://github.com/heroku/heroku-buildpack-ffmpeg-latest"
+      "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git"
     }
-  ]
+  ],
+  "scripts": {
+    "postdeploy": "python -c 'from database_schema import *; create_tables()'"
+  }
 }

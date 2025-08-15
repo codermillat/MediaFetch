@@ -1,0 +1,17 @@
+🤖 MediaFetch - Download videos from YouTube, TikTok, Instagram & more!
+
+🎬 Auto-deliver Instagram content to Telegram
+📱 Send /bind to start automatic content delivery
+🔗 Connect with @mediafetchbot on Instagram
+
+Features:
+• Multi-platform video downloads
+• Instagram content auto-delivery
+• Smart compression & optimization
+• 24/7 automated service
+
+Start: /start
+Help: /help
+Bind Instagram: /bind
+
+#MediaFetch #VideoDownload #Instagram #AutoDelivery
