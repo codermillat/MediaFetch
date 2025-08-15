@@ -10,7 +10,6 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List
-from supabase import create_client, Client
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +24,34 @@ class SharedBindingSystem:
         if not self.supabase_url or not self.supabase_key:
             logger.error("❌ Supabase credentials not configured")
             self.client = None
+            # Fallback to in-memory storage temporarily
+            self.pending_bindings: Dict[str, Dict] = {}
+            self.active_bindings: Dict[int, str] = {}
+            logger.info("🔄 Falling back to in-memory storage")
         else:
             try:
+                # Import supabase only when needed
+                from supabase import create_client
                 self.client = create_client(self.supabase_url, self.supabase_key)
                 logger.info("✅ Supabase client initialized")
+                self.pending_bindings: Dict[str, Dict] = {}
+                self.active_bindings: Dict[int, str] = {}
                 self._ensure_tables_exist()
             except Exception as e:
                 logger.error(f"❌ Failed to initialize Supabase client: {e}")
                 self.client = None
+                # Fallback to in-memory storage
+                self.pending_bindings: Dict[str, Dict] = {}
+                self.active_bindings: Dict[int, str] = {}
+                logger.info("🔄 Falling back to in-memory storage due to Supabase error")
         
-        logger.info(f"SharedBindingSystem initialized with database storage")
+        logger.info(f"SharedBindingSystem initialized with {'database' if self.client else 'in-memory'} storage")
     
     def _ensure_tables_exist(self):
         """Ensure binding tables exist in the database"""
         try:
+            if not self.client:
+                return
             # Create binding_codes table if it doesn't exist
             self.client.table('binding_codes').select('id').limit(1).execute()
             logger.info("✅ binding_codes table exists")
@@ -83,85 +96,142 @@ class SharedBindingSystem:
             logger.error(f"Failed to create binding tables: {e}")
     
     def add_pending_binding(self, code: str, telegram_id: int, username: str = None) -> bool:
-        """Add a pending binding code to the database"""
+        """Add a pending binding code to the database or in-memory"""
         try:
-            if not self.client:
-                logger.error("❌ Supabase client not available")
-                return False
-            
+            if self.client:
+                # Try database first
+                expires_at = datetime.utcnow() + timedelta(hours=24)
+                
+                # Insert into binding_codes table
+                data = {
+                    'code': code,
+                    'telegram_user_id': telegram_id,
+                    'instagram_username': username,
+                    'expires_at': expires_at.isoformat(),
+                    'is_used': False
+                }
+                
+                result = self.client.table('binding_codes').insert(data).execute()
+                
+                if result.data:
+                    logger.info(f"➕ Added pending binding to database: Code {code} for Telegram user {telegram_id}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Database insert failed, falling back to in-memory")
+                    raise Exception("Database insert failed")
+                    
+            # Fallback to in-memory storage
             expires_at = datetime.utcnow() + timedelta(hours=24)
-            
-            # Insert into binding_codes table
-            data = {
-                'code': code,
-                'telegram_user_id': telegram_id,
+            binding_data = {
+                'telegram_id': telegram_id,
                 'instagram_username': username,
                 'expires_at': expires_at.isoformat(),
-                'is_used': False
+                'created_at': datetime.utcnow().isoformat()
             }
             
-            result = self.client.table('binding_codes').insert(data).execute()
-            
-            if result.data:
-                logger.info(f"➕ Added pending binding: Code {code} for Telegram user {telegram_id}")
-                logger.info(f"📊 Binding data: {data}")
-                return True
-            else:
-                logger.error(f"❌ Failed to insert binding code {code}")
-                return False
+            self.pending_bindings[code] = binding_data
+            logger.info(f"➕ Added pending binding to memory: Code {code} for Telegram user {telegram_id}")
+            logger.info(f"📊 Total pending bindings: {len(self.pending_bindings)}")
+            return True
                 
         except Exception as e:
             logger.error(f"Error adding pending binding: {e}")
-            return False
+            # Always fallback to in-memory
+            try:
+                expires_at = datetime.utcnow() + timedelta(hours=24)
+                binding_data = {
+                    'telegram_id': telegram_id,
+                    'instagram_username': username,
+                    'expires_at': expires_at.isoformat(),
+                    'created_at': datetime.utcnow().isoformat()
+                }
+                
+                self.pending_bindings[code] = binding_data
+                logger.info(f"🔄 Fallback: Added to in-memory storage")
+                return True
+            except Exception as fallback_error:
+                logger.error(f"Fallback also failed: {fallback_error}")
+                return False
     
     def process_binding_code(self, code: str, instagram_username: str) -> Dict:
         """Process a binding code sent to Instagram"""
         try:
-            if not self.client:
-                logger.error("❌ Supabase client not available")
-                return {'success': False, 'error': 'Database not available'}
-            
             logger.info(f"🔍 Processing binding code: {code} for Instagram user: {instagram_username}")
             
-            # Find the binding code in the database
-            result = self.client.table('binding_codes').select('*').eq('code', code).eq('is_used', False).execute()
+            if self.client:
+                # Try database first
+                try:
+                    result = self.client.table('binding_codes').select('*').eq('code', code).eq('is_used', False).execute()
+                    
+                    if result.data:
+                        binding = result.data[0]
+                        logger.info(f"✅ Found binding in database: {binding}")
+                        
+                        # Check if expired
+                        expires_at = datetime.fromisoformat(binding['expires_at'].replace('Z', '+00:00'))
+                        if datetime.utcnow() > expires_at:
+                            logger.warning(f"⏰ Binding code {code} has expired")
+                            return {
+                                'success': False,
+                                'error': 'Binding code has expired'
+                            }
+                        
+                        # Mark code as used
+                        self.client.table('binding_codes').update({'is_used': True}).eq('code', code).execute()
+                        
+                        # Create user binding
+                        binding_data = {
+                            'telegram_user_id': binding['telegram_user_id'],
+                            'instagram_username': instagram_username,
+                            'binding_code': code
+                        }
+                        
+                        self.client.table('user_bindings').insert(binding_data).execute()
+                        
+                        logger.info(f"✅ Binding activated via database: Telegram {binding['telegram_user_id']} -> Instagram @{instagram_username}")
+                        
+                        return {
+                            'success': True,
+                            'telegram_id': binding['telegram_user_id'],
+                            'instagram_username': instagram_username,
+                            'message': f"✅ Account @{instagram_username} successfully bound to MediaFetch!"
+                        }
+                except Exception as db_error:
+                    logger.warning(f"⚠️ Database processing failed: {db_error}, falling back to in-memory")
             
-            if not result.data:
-                logger.warning(f"❌ Code {code} not found or already used")
+            # Fallback to in-memory storage
+            if code not in self.pending_bindings:
+                logger.warning(f"❌ Code {code} not found in pending bindings")
                 return {
                     'success': False,
                     'error': 'Invalid or expired binding code'
                 }
             
-            binding = result.data[0]
-            logger.info(f"✅ Found binding: {binding}")
+            binding = self.pending_bindings[code]
+            logger.info(f"✅ Found binding in memory: {binding}")
             
             # Check if expired
-            expires_at = datetime.fromisoformat(binding['expires_at'].replace('Z', '+00:00'))
+            expires_at = datetime.fromisoformat(binding['expires_at'])
             if datetime.utcnow() > expires_at:
+                del self.pending_bindings[code]
                 logger.warning(f"⏰ Binding code {code} has expired")
                 return {
                     'success': False,
                     'error': 'Binding code has expired'
                 }
             
-            # Mark code as used
-            self.client.table('binding_codes').update({'is_used': True}).eq('code', code).execute()
+            # Activate binding
+            telegram_id = binding['telegram_id']
+            self.active_bindings[telegram_id] = instagram_username
             
-            # Create user binding
-            binding_data = {
-                'telegram_user_id': binding['telegram_user_id'],
-                'instagram_username': instagram_username,
-                'binding_code': code
-            }
+            # Remove from pending
+            del self.pending_bindings[code]
             
-            self.client.table('user_bindings').insert(binding_data).execute()
-            
-            logger.info(f"✅ Binding activated: Telegram {binding['telegram_user_id']} -> Instagram @{instagram_username}")
+            logger.info(f"✅ Binding activated via memory: Telegram {telegram_id} -> Instagram @{instagram_username}")
             
             return {
                 'success': True,
-                'telegram_id': binding['telegram_user_id'],
+                'telegram_id': telegram_id,
                 'instagram_username': instagram_username,
                 'message': f"✅ Account @{instagram_username} successfully bound to MediaFetch!"
             }
@@ -176,18 +246,25 @@ class SharedBindingSystem:
     def get_user_bindings(self, telegram_id: int) -> List[str]:
         """Get all active bindings for a Telegram user"""
         try:
-            if not self.client:
-                return []
+            if self.client:
+                try:
+                    result = self.client.table('user_bindings').select('instagram_username').eq('telegram_user_id', telegram_id).eq('is_active', True).execute()
+                    
+                    if result.data:
+                        usernames = [binding['instagram_username'] for binding in result.data]
+                        logger.info(f"📱 Found {len(usernames)} active bindings in database for user {telegram_id}")
+                        return usernames
+                except Exception as db_error:
+                    logger.warning(f"⚠️ Database query failed: {db_error}, falling back to memory")
             
-            result = self.client.table('user_bindings').select('instagram_username').eq('telegram_user_id', telegram_id).eq('is_active', True).execute()
+            # Fallback to in-memory storage
+            if telegram_id in self.active_bindings:
+                username = self.active_bindings[telegram_id]
+                logger.info(f"📱 Found 1 active binding in memory for user {telegram_id}")
+                return [username]
             
-            if result.data:
-                usernames = [binding['instagram_username'] for binding in result.data]
-                logger.info(f"📱 Found {len(usernames)} active bindings for user {telegram_id}")
-                return usernames
-            else:
-                logger.info(f"📱 No active bindings found for user {telegram_id}")
-                return []
+            logger.info(f"📱 No active bindings found for user {telegram_id}")
+            return []
                 
         except Exception as e:
             logger.error(f"Error getting user bindings: {e}")
@@ -196,19 +273,27 @@ class SharedBindingSystem:
     def remove_binding(self, telegram_id: int, instagram_username: str = None) -> bool:
         """Remove a binding"""
         try:
-            if not self.client:
-                return False
+            if self.client:
+                try:
+                    if instagram_username:
+                        # Remove specific binding
+                        result = self.client.table('user_bindings').update({'is_active': False}).eq('telegram_user_id', telegram_id).eq('instagram_username', instagram_username).execute()
+                    else:
+                        # Remove all bindings for user
+                        result = self.client.table('user_bindings').update({'is_active': False}).eq('telegram_user_id', telegram_id).execute()
+                    
+                    if result.data:
+                        logger.info(f"🗑️ Binding removed from database for Telegram user {telegram_id}")
+                        return True
+                except Exception as db_error:
+                    logger.warning(f"⚠️ Database removal failed: {db_error}, falling back to memory")
             
-            if instagram_username:
-                # Remove specific binding
-                result = self.client.table('user_bindings').update({'is_active': False}).eq('telegram_user_id', telegram_id).eq('instagram_username', instagram_username).execute()
-            else:
-                # Remove all bindings for user
-                result = self.client.table('user_bindings').update({'is_active': False}).eq('telegram_user_id', telegram_id).execute()
-            
-            if result.data:
-                logger.info(f"🗑️ Binding removed for Telegram user {telegram_id}")
-                return True
+            # Fallback to in-memory storage
+            if telegram_id in self.active_bindings:
+                if instagram_username is None or self.active_bindings[telegram_id] == instagram_username:
+                    del self.active_bindings[telegram_id]
+                    logger.info(f"🗑️ Binding removed from memory for Telegram user {telegram_id}")
+                    return True
             return False
             
         except Exception as e:
@@ -218,16 +303,33 @@ class SharedBindingSystem:
     def cleanup_expired_bindings(self):
         """Remove expired pending bindings"""
         try:
-            if not self.client:
-                return
+            if self.client:
+                try:
+                    current_time = datetime.utcnow().isoformat()
+                    
+                    # Mark expired codes as used
+                    result = self.client.table('binding_codes').update({'is_used': True}).lt('expires_at', current_time).eq('is_used', False).execute()
+                    
+                    if result.data:
+                        logger.info(f"🧹 Database cleanup completed: marked {len(result.data)} expired codes as used")
+                except Exception as db_error:
+                    logger.warning(f"⚠️ Database cleanup failed: {db_error}")
             
-            current_time = datetime.utcnow().isoformat()
+            # Also cleanup in-memory
+            current_time = datetime.utcnow()
+            expired_codes = []
             
-            # Mark expired codes as used
-            result = self.client.table('binding_codes').update({'is_used': True}).lt('expires_at', current_time).eq('is_used', False).execute()
+            for code, binding in self.pending_bindings.items():
+                expires_at = datetime.fromisoformat(binding['expires_at'])
+                if current_time > expires_at:
+                    expired_codes.append(code)
             
-            if result.data:
-                logger.info(f"🧹 Cleanup completed: marked {len(result.data)} expired codes as used")
+            for code in expired_codes:
+                del self.pending_bindings[code]
+                logger.info(f"⏰ Removed expired binding code from memory: {code}")
+            
+            if expired_codes:
+                logger.info(f"🧹 Memory cleanup completed: removed {len(expired_codes)} expired codes")
                 
         except Exception as e:
             logger.error(f"Error cleaning up expired bindings: {e}")
@@ -235,14 +337,17 @@ class SharedBindingSystem:
     def get_pending_binding(self, code: str) -> Optional[Dict]:
         """Get a pending binding by code"""
         try:
-            if not self.client:
-                return None
+            if self.client:
+                try:
+                    result = self.client.table('binding_codes').select('*').eq('code', code).eq('is_used', False).execute()
+                    
+                    if result.data:
+                        return result.data[0]
+                except Exception as db_error:
+                    logger.warning(f"⚠️ Database query failed: {db_error}, falling back to memory")
             
-            result = self.client.table('binding_codes').select('*').eq('code', code).eq('is_used', False).execute()
-            
-            if result.data:
-                return result.data[0]
-            return None
+            # Fallback to in-memory storage
+            return self.pending_bindings.get(code)
             
         except Exception as e:
             logger.error(f"Error getting pending binding: {e}")
@@ -251,15 +356,22 @@ class SharedBindingSystem:
     def is_code_valid(self, code: str) -> bool:
         """Check if a binding code is valid and not expired"""
         try:
-            if not self.client:
+            if self.client:
+                try:
+                    result = self.client.table('binding_codes').select('expires_at').eq('code', code).eq('is_used', False).execute()
+                    
+                    if result.data:
+                        expires_at = datetime.fromisoformat(result.data[0]['expires_at'].replace('Z', '+00:00'))
+                        return datetime.utcnow() <= expires_at
+                except Exception as db_error:
+                    logger.warning(f"⚠️ Database validation failed: {db_error}, falling back to memory")
+            
+            # Fallback to in-memory storage
+            if code not in self.pending_bindings:
                 return False
             
-            result = self.client.table('binding_codes').select('expires_at').eq('code', code).eq('is_used', False).execute()
-            
-            if not result.data:
-                return False
-            
-            expires_at = datetime.fromisoformat(result.data[0]['expires_at'].replace('Z', '+00:00'))
+            binding = self.pending_bindings[code]
+            expires_at = datetime.fromisoformat(binding['expires_at'])
             return datetime.utcnow() <= expires_at
             
         except Exception as e:
@@ -269,22 +381,37 @@ class SharedBindingSystem:
     def get_status(self) -> Dict:
         """Get current system status for debugging"""
         try:
-            if not self.client:
-                return {'error': 'Database not available'}
-            
-            # Get pending codes count
-            pending_result = self.client.table('binding_codes').select('id', count='exact').eq('is_used', False).execute()
-            pending_count = pending_result.count if hasattr(pending_result, 'count') else len(pending_result.data)
-            
-            # Get active bindings count
-            active_result = self.client.table('user_bindings').select('id', count='exact').eq('is_active', True).execute()
-            active_count = active_result.count if hasattr(active_result, 'count') else len(active_result.data)
-            
-            return {
-                'pending_count': pending_count,
-                'active_count': active_count,
-                'database_status': 'connected'
+            status = {
+                'storage_type': 'database' if self.client else 'in-memory',
+                'database_status': 'connected' if self.client else 'disconnected'
             }
+            
+            if self.client:
+                try:
+                    # Get pending codes count
+                    pending_result = self.client.table('binding_codes').select('id', count='exact').eq('is_used', False).execute()
+                    pending_count = pending_result.count if hasattr(pending_result, 'count') else len(pending_result.data)
+                    
+                    # Get active bindings count
+                    active_result = self.client.table('user_bindings').select('id', count='exact').eq('is_active', True).execute()
+                    active_count = active_result.count if hasattr(active_result, 'count') else len(active_result.data)
+                    
+                    status.update({
+                        'pending_count': pending_count,
+                        'active_count': active_count
+                    })
+                except Exception as db_error:
+                    status['database_error'] = str(db_error)
+            
+            # Add in-memory status
+            status.update({
+                'memory_pending_count': len(self.pending_bindings),
+                'memory_active_count': len(self.active_bindings),
+                'memory_pending_codes': list(self.pending_bindings.keys()),
+                'memory_active_bindings': self.active_bindings.copy()
+            })
+            
+            return status
             
         except Exception as e:
             logger.error(f"Error getting status: {e}")
