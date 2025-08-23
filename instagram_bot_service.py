@@ -172,6 +172,9 @@ class InstagramBotService:
                     messages = self.client.direct_messages(thread.id, amount=10)
                     
                     for message in messages:
+                        # Debug: Log message structure
+                        logger.info(f"🔍 Message from @{thread.users[0].username}: type={getattr(message, 'media_type', 'text')}, has_text={hasattr(message, 'text')}, has_media={hasattr(message, 'media_type')}")
+                        
                         # Process both text and media messages
                         if hasattr(message, 'text') and message.text:
                             # Text message
@@ -180,8 +183,12 @@ class InstagramBotService:
                             # Media message (reel, video, image)
                             await self._process_media_message(message, thread.users[0].username)
                         else:
-                            # Other message types
-                            logger.info(f"📨 Unsupported message type from @{thread.users[0].username}")
+                            # Other message types - try to detect media anyway
+                            if hasattr(message, 'id') and hasattr(message, 'media_type'):
+                                logger.info(f"🎬 Attempting to process as media: {getattr(message, 'media_type', 'unknown')}")
+                                await self._process_media_message(message, thread.users[0].username)
+                            else:
+                                logger.info(f"📨 Unsupported message type from @{thread.users[0].username}")
                 
                 # Wait before next check
                 await asyncio.sleep(30)  # Check every 30 seconds
@@ -250,13 +257,16 @@ class InstagramBotService:
     async def _process_media_message(self, message, sender_username: str):
         """Process incoming Instagram media message"""
         try:
-            logger.info(f"🎬 Media message from @{sender_username}: {message.media_type}")
+            logger.info(f"🎬 Media message from @{sender_username}: {getattr(message, 'media_type', 'unknown')}")
+            logger.info(f"🔍 Message details: id={getattr(message, 'id', 'N/A')}, type={getattr(message, 'media_type', 'N/A')}")
             
             # Check if user is bound
             if self._is_bound_user(sender_username):
+                logger.info(f"✅ User @{sender_username} is bound, processing media content")
                 # Handle content delivery for media
                 await self._handle_content_delivery(sender_username, message)
             else:
+                logger.info(f"❌ User @{sender_username} is not bound, sending help message")
                 # Send help message for unbound users
                 if sender_username not in self.help_sent_users:
                     await self._send_help_message(sender_username)
@@ -333,11 +343,14 @@ class InstagramBotService:
             
             if telegram_id:
                 logger.info(f"📦 Content delivery: @{username} -> Telegram {telegram_id}")
+                logger.info(f"🔍 Message data: type={getattr(message_data, 'media_type', 'text')}, id={getattr(message_data, 'id', 'N/A')}")
                 
                 # Check if this is media content
                 if hasattr(message_data, 'media_type') and message_data.media_type:
+                    logger.info(f"🎬 Processing as media content: {message_data.media_type}")
                     await self._process_media_content(username, telegram_id, message_data)
                 else:
+                    logger.info(f"📝 Processing as text content")
                     # Text content
                     await self._process_text_content(username, telegram_id, message_data.text)
                     
@@ -354,17 +367,33 @@ class InstagramBotService:
         """Process media content (reels, videos, images) and send to Telegram"""
         try:
             logger.info(f"🎬 Processing media content from @{username} for Telegram {telegram_id}")
+            logger.info(f"🔍 Media details: type={getattr(message_data, 'media_type', 'unknown')}, id={getattr(message_data, 'id', 'N/A')}")
             
             # Get media info
             media_type = message_data.media_type
             media_id = message_data.id
             
+            logger.info(f"📱 Processing {media_type} with ID {media_id}")
+            
             if media_type in ['REEL', 'VIDEO', 'CLIP']:
+                logger.info(f"🎥 Processing as video content")
                 await self._process_video_content(username, telegram_id, media_id)
             elif media_type in ['PHOTO', 'IMAGE']:
+                logger.info(f"🖼️ Processing as image content")
                 await self._process_image_content(username, telegram_id, media_id)
             else:
-                logger.info(f"📱 Unsupported media type: {media_type}")
+                logger.info(f"📱 Unsupported media type: {media_type}, attempting generic download")
+                # Try to download as generic media
+                try:
+                    media_path = self.client.media_download(media_id, folder="/tmp")
+                    if media_path and os.path.exists(media_path):
+                        logger.info(f"📥 Generic media downloaded: {media_path}")
+                        await self._send_to_telegram(telegram_id, media_path, media_type.lower(), username)
+                        os.remove(media_path)
+                    else:
+                        logger.error(f"Failed to download generic media {media_id}")
+                except Exception as download_error:
+                    logger.error(f"Error downloading generic media: {download_error}")
                 
         except Exception as e:
             logger.error(f"Error processing media content: {e}")
@@ -489,8 +518,16 @@ class InstagramBotService:
             }
             
             # Send to Telegram bot via webhook or direct API
-            # For now, we'll use a simple HTTP request to the web endpoint
-            webhook_url = os.getenv('WEBHOOK_URL', 'http://localhost:5000')
+            # Use the actual app URL from environment or construct from Heroku app name
+            webhook_url = os.getenv('WEBHOOK_URL')
+            if not webhook_url:
+                # Try to construct from Heroku app name
+                app_name = os.getenv('HEROKU_APP_NAME')
+                if app_name:
+                    webhook_url = f"https://{app_name}.herokuapp.com"
+                else:
+                    # Fallback to localhost for development
+                    webhook_url = "http://localhost:5000"
             
             import aiohttp
             async with aiohttp.ClientSession() as session:
