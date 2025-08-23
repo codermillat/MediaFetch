@@ -85,6 +85,13 @@ class SharedBindingSystem:
         """Get all active bindings (for debugging/admin purposes)"""
         return self.active_bindings.copy()
 
+    def _is_bound_user(self, instagram_username: str) -> bool:
+        """Check if an Instagram user is already bound (internal method)"""
+        if self.use_database:
+            result = self._make_supabase_request('GET', f'user_bindings?instagram_username=eq.{instagram_username}&is_active=eq.true')
+            return result is not None and len(result) > 0
+        return False
+
     def _rate_limit(self):
         """Implement rate limiting to prevent API spam"""
         current_time = time.time()
