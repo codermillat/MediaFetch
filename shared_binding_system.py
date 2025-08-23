@@ -29,6 +29,9 @@ class SharedBindingSystem:
         # User state tracking
         self.user_binding_attempts: Dict[int, List[float]] = {}  # Track binding attempts per user
         self.max_binding_attempts = 3  # Max attempts per hour
+
+        # Active bindings cache (telegram_id -> instagram_username)
+        self.active_bindings: Dict[int, str] = {}
         
         # Check if Supabase is configured
         if not self.supabase_url or not self.supabase_key:
@@ -37,6 +40,50 @@ class SharedBindingSystem:
         else:
             self.use_database = True
             logger.info("✅ Using Supabase database for binding storage")
+
+        # Load existing active bindings on startup
+        self._load_active_bindings()
+
+    def _load_active_bindings(self):
+        """Load existing active bindings from database"""
+        if self.use_database:
+            try:
+                result = self._make_supabase_request('GET', 'user_bindings?is_active=eq.true')
+                if result and isinstance(result, list):
+                    for binding in result:
+                        telegram_id = binding.get('telegram_user_id')
+                        instagram_username = binding.get('instagram_username')
+                        if telegram_id and instagram_username:
+                            self.active_bindings[telegram_id] = instagram_username
+                    logger.info(f"✅ Loaded {len(self.active_bindings)} active bindings from database")
+                else:
+                    logger.info("ℹ️ No existing active bindings found")
+            except Exception as e:
+                logger.error(f"❌ Failed to load active bindings: {e}")
+                self.active_bindings = {}  # Reset to empty dict on error
+        else:
+            logger.info("ℹ️ Using in-memory storage - no existing bindings to load")
+
+    def remove_binding(self, telegram_id: int, instagram_username: str = None):
+        """Remove a binding from cache"""
+        if instagram_username is None:
+            # Remove all bindings for this telegram user
+            if telegram_id in self.active_bindings:
+                del self.active_bindings[telegram_id]
+                logger.info(f"✅ Removed binding for Telegram user {telegram_id}")
+        else:
+            # Remove specific binding
+            if telegram_id in self.active_bindings and self.active_bindings[telegram_id] == instagram_username:
+                del self.active_bindings[telegram_id]
+                logger.info(f"✅ Removed binding: Telegram {telegram_id} -> Instagram @{instagram_username}")
+
+    def get_active_binding(self, telegram_id: int) -> Optional[str]:
+        """Get active Instagram binding for a Telegram user"""
+        return self.active_bindings.get(telegram_id)
+
+    def get_all_active_bindings(self) -> Dict[int, str]:
+        """Get all active bindings (for debugging/admin purposes)"""
+        return self.active_bindings.copy()
 
     def _rate_limit(self):
         """Implement rate limiting to prevent API spam"""
@@ -269,6 +316,10 @@ class SharedBindingSystem:
                 result = self._make_supabase_request('POST', 'user_bindings', binding_data_new)
                 if result:
                     logger.info(f"✅ Binding activated in database: Telegram {telegram_id} -> Instagram @{instagram_username}")
+
+                    # Update active bindings cache
+                    self.active_bindings[telegram_id] = instagram_username
+
                     return {
                         'success': True,
                         'telegram_id': telegram_id,
@@ -315,7 +366,11 @@ class SharedBindingSystem:
         """Remove a specific binding for a user"""
         if self.use_database:
             result = self._make_supabase_request('DELETE', f'user_bindings?telegram_user_id=eq.{telegram_id}&instagram_username=eq.{instagram_username}')
-            return result is not None and result.get('success', False)
+            if result is not None and result.get('success', False):
+                # Remove from cache
+                self.remove_binding(telegram_id, instagram_username)
+                return True
+            return False
         return False
 
     def cleanup_expired_bindings(self):
