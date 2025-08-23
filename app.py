@@ -7,8 +7,9 @@ Heroku-compatible web application with health checks and metrics
 import os
 import logging
 from flask import Flask, jsonify
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry
 from telegram_media_bot.bot import MediaFetchBot
+from telegram_media_bot.metrics import MetricsCollector
 
 # Configure logging
 logging.basicConfig(
@@ -19,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Initialize bot instance
+# Initialize global metrics instance
+global_metrics = MetricsCollector()
 bot = None
 
 @app.route('/')
@@ -34,7 +36,22 @@ def health_check():
 @app.route('/metrics')
 def metrics():
     """Prometheus metrics endpoint"""
-    return generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
+    try:
+        # Update system metrics before returning
+        global_metrics.update_system_metrics()
+        metrics_data = global_metrics.get_prometheus_metrics()
+
+        # Ensure we return bytes for prometheus format
+        if isinstance(metrics_data, str):
+            metrics_data = metrics_data.encode('utf-8')
+
+        return metrics_data, 200, {'Content-Type': CONTENT_TYPE_LATEST}
+
+    except Exception as e:
+        logger.error(f"Failed to generate metrics: {e}")
+        # Return a minimal metrics response on error
+        error_response = b"# Error generating metrics\n"
+        return error_response, 500, {'Content-Type': CONTENT_TYPE_LATEST}
 
 @app.route('/start-bot')
 def start_bot():
@@ -42,8 +59,10 @@ def start_bot():
     global bot
     try:
         if bot is None:
-            # For testing, just return success without full initialization
-            return jsonify({'status': 'Bot ready for testing', 'message': 'Core systems loaded successfully'})
+            # Initialize bot with global metrics instance
+            from telegram_media_bot.bot import MediaFetchBot
+            bot = MediaFetchBot(metrics_instance=global_metrics)
+            return jsonify({'status': 'Bot initialized', 'message': 'Bot created with shared metrics'})
         else:
             return jsonify({'status': 'Bot already running'})
     except Exception as e:

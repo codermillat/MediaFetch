@@ -10,110 +10,165 @@ from typing import Dict, Any, Optional
 from collections import defaultdict, Counter
 from datetime import datetime, timedelta
 
-from prometheus_client import (
-    Counter, Histogram, Gauge, Summary, generate_latest,
-    CONTENT_TYPE_LATEST
-)
-
 logger = logging.getLogger(__name__)
+
+# Check prometheus client version and import appropriately
+try:
+    from prometheus_client import (
+        Counter, Histogram, Gauge, Summary, generate_latest,
+        CONTENT_TYPE_LATEST, CollectorRegistry
+    )
+    logger.info("Prometheus client imported successfully")
+except ImportError as e:
+    logger.error(f"Failed to import prometheus_client: {e}")
+    # Create dummy classes to prevent import errors
+    class Counter:
+        def __init__(self, *args, **kwargs):
+            pass
+        def inc(self, *args, **kwargs):
+            pass
+        def labels(self, *args, **kwargs):
+            return self
+
+    class Histogram:
+        def __init__(self, *args, **kwargs):
+            pass
+        def observe(self, *args, **kwargs):
+            pass
+
+    class Gauge:
+        def __init__(self, *args, **kwargs):
+            pass
+        def set(self, *args, **kwargs):
+            pass
+        def labels(self, *args, **kwargs):
+            return self
+
+    class CollectorRegistry:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    def generate_latest(registry=None):
+        return b"# Prometheus client not available\n"
+
+    CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
 
 class MetricsCollector:
     """Collects and manages metrics for the MediaFetch bot"""
-    
+
     def __init__(self):
         """Initialize metrics collector with Prometheus metrics"""
+        # Create a custom registry to avoid conflicts
+        self.registry = CollectorRegistry()
+
         # Command usage metrics
         self.command_usage = Counter(
             'mediafetch_commands_total',
             'Total command usage',
-            ['command_name']
+            ['command_name'],
+            registry=self.registry
         )
         
         # Download metrics
         self.downloads_total = Counter(
             'mediafetch_downloads_total',
-            'Total download attempts'
+            'Total download attempts',
+            registry=self.registry
         )
-        
+
         self.downloads_successful = Counter(
             'mediafetch_downloads_successful_total',
-            'Total successful downloads'
+            'Total successful downloads',
+            registry=self.registry
         )
-        
+
         self.downloads_failed = Counter(
             'mediafetch_downloads_failed_total',
-            'Total failed downloads'
+            'Total failed downloads',
+            registry=self.registry
         )
-        
+
         self.download_duration = Histogram(
             'mediafetch_download_duration_seconds',
             'Download duration in seconds',
-            buckets=[1, 5, 10, 30, 60, 120, 300, 600]
+            buckets=[1, 5, 10, 30, 60, 120, 300, 600],
+            registry=self.registry
         )
-        
+
         self.download_size = Histogram(
             'mediafetch_download_size_bytes',
             'Downloaded file size in bytes',
-            buckets=[1024, 10240, 102400, 1048576, 10485760, 52428800]
+            buckets=[1024, 10240, 102400, 1048576, 10485760, 52428800],
+            registry=self.registry
         )
-        
+
         # User metrics
         self.active_users = Gauge(
             'mediafetch_active_users',
-            'Number of active users'
+            'Number of active users',
+            registry=self.registry
         )
-        
+
         self.user_downloads = Counter(
             'mediafetch_user_downloads_total',
             'Total downloads per user',
-            ['user_id']
+            ['user_id'],
+            registry=self.registry
         )
-        
+
         # Error metrics
         self.errors_total = Counter(
             'mediafetch_errors_total',
             'Total errors',
-            ['error_type']
+            ['error_type'],
+            registry=self.registry
         )
-        
+
         # Platform metrics
         self.platform_downloads = Counter(
             'mediafetch_platform_downloads_total',
             'Total downloads per platform',
-            ['platform']
+            ['platform'],
+            registry=self.registry
         )
-        
+
         # Processing metrics
         self.processing_duration = Histogram(
             'mediafetch_processing_duration_seconds',
             'Media processing duration in seconds',
-            buckets=[1, 5, 10, 30, 60, 120, 300]
+            buckets=[1, 5, 10, 30, 60, 120, 300],
+            registry=self.registry
         )
-        
+
         self.processing_success = Counter(
             'mediafetch_processing_success_total',
-            'Total successful media processing operations'
+            'Total successful media processing operations',
+            registry=self.registry
         )
-        
+
         self.processing_failures = Counter(
             'mediafetch_processing_failures_total',
-            'Total failed media processing operations'
+            'Total failed media processing operations',
+            registry=self.registry
         )
-        
+
         # System metrics
         self.bot_uptime = Gauge(
             'mediafetch_bot_uptime_seconds',
-            'Bot uptime in seconds'
+            'Bot uptime in seconds',
+            registry=self.registry
         )
-        
+
         self.memory_usage = Gauge(
             'mediafetch_memory_usage_bytes',
-            'Memory usage in bytes'
+            'Memory usage in bytes',
+            registry=self.registry
         )
-        
+
         self.disk_usage = Gauge(
             'mediafetch_disk_usage_bytes',
-            'Disk usage in bytes'
+            'Disk usage in bytes',
+            registry=self.registry
         )
         
         # Initialize internal tracking
@@ -341,10 +396,10 @@ class MetricsCollector:
         try:
             # Update system metrics before generating
             self.update_system_metrics()
-            
-            # Generate Prometheus metrics
-            return generate_latest()
-            
+
+            # Generate Prometheus metrics from our custom registry
+            return generate_latest(self.registry)
+
         except Exception as e:
             logger.error(f"Failed to generate Prometheus metrics: {e}")
             return f"# Error generating metrics: {e}"

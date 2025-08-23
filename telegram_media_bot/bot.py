@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 class MediaFetchBot:
     """Main MediaFetch bot class with production-ready features"""
     
-    def __init__(self):
+    def __init__(self, metrics_instance=None):
         """Initialize the bot with configuration and components"""
         self.config = Config()
-        self.metrics = MetricsCollector()
+        self.metrics = metrics_instance if metrics_instance is not None else MetricsCollector()
         self.downloader = MediaDownloader()
         self.processor = MediaProcessor()
         self.instagram_client = InstagramClient()
