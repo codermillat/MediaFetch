@@ -6,7 +6,7 @@ Heroku-compatible web application with health checks and metrics
 
 import os
 import logging
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST, CollectorRegistry
 from telegram_media_bot.bot import MediaFetchBot
 from telegram_media_bot.metrics import MetricsCollector
@@ -114,6 +114,54 @@ def test_instagram():
     except Exception as e:
         logger.error(f"Instagram integration test failed: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/instagram-content', methods=['POST'])
+def instagram_content_webhook():
+    """Receive content from Instagram bot and forward to Telegram"""
+    try:
+        from flask import request
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data received'}), 400
+        
+        telegram_user_id = data.get('telegram_user_id')
+        instagram_username = data.get('instagram_username')
+        content_type = data.get('content_type')
+        content = data.get('content')
+        file_path = data.get('file_path')
+        
+        if not all([telegram_user_id, instagram_username, content_type]):
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        logger.info(f"📥 Instagram content webhook: {content_type} from @{instagram_username} to Telegram {telegram_user_id}")
+        
+        # Forward content to Telegram bot
+        if bot:
+            try:
+                if content_type == 'text':
+                    # Send text message
+                    bot.send_message(telegram_user_id, f"📱 From Instagram @{instagram_username}:\n\n{content}")
+                elif content_type in ['video', 'photo'] and file_path:
+                    # Send media file
+                    if content_type == 'video':
+                        bot.send_video(telegram_user_id, file_path, caption=f"📱 From Instagram @{instagram_username}")
+                    else:
+                        bot.send_photo(telegram_user_id, file_path, caption=f"📱 From Instagram @{instagram_username}")
+                
+                logger.info(f"✅ Content forwarded to Telegram user {telegram_user_id}")
+                return jsonify({'status': 'success', 'message': 'Content forwarded to Telegram'})
+                
+            except Exception as e:
+                logger.error(f"Failed to forward content to Telegram: {e}")
+                return jsonify({'error': f'Telegram forwarding failed: {str(e)}'}), 500
+        else:
+            logger.error("Telegram bot not running")
+            return jsonify({'error': 'Telegram bot not running'}), 503
+            
+    except Exception as e:
+        logger.error(f"Instagram content webhook error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))

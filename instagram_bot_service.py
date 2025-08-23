@@ -172,8 +172,16 @@ class InstagramBotService:
                     messages = self.client.direct_messages(thread.id, amount=10)
                     
                     for message in messages:
+                        # Process both text and media messages
                         if hasattr(message, 'text') and message.text:
-                            await self._process_message(message.text, thread.users[0].username)
+                            # Text message
+                            await self._process_message(message, thread.users[0].username)
+                        elif hasattr(message, 'media_type') and message.media_type:
+                            # Media message (reel, video, image)
+                            await self._process_media_message(message, thread.users[0].username)
+                        else:
+                            # Other message types
+                            logger.info(f"📨 Unsupported message type from @{thread.users[0].username}")
                 
                 # Wait before next check
                 await asyncio.sleep(30)  # Check every 30 seconds
@@ -182,9 +190,10 @@ class InstagramBotService:
                 logger.error(f"Error monitoring DMs: {e}")
                 await asyncio.sleep(60)  # Wait longer on error
     
-    async def _process_message(self, message_text: str, sender_username: str):
-        """Process incoming Instagram message"""
+    async def _process_message(self, message, sender_username: str):
+        """Process incoming Instagram text message"""
         try:
+            message_text = message.text if hasattr(message, 'text') else str(message)
             logger.info(f"📨 Message from @{sender_username}: {message_text}")
             
             # Check if it's a binding code first
@@ -210,7 +219,7 @@ class InstagramBotService:
             # Check if user is bound
             if self._is_bound_user(sender_username):
                 # Handle content delivery
-                await self._handle_content_delivery(sender_username, message_text)
+                await self._handle_content_delivery(sender_username, message)
             else:
                 # Check if we can send a message to this user (rate limiting)
                 if not self._can_send_message(sender_username):
@@ -234,6 +243,33 @@ class InstagramBotService:
                 await self._send_dm(sender_username, "❌ Sorry, there was an error processing your message. Please try again.")
             except:
                 pass
+
+    async def _process_media_message(self, message, sender_username: str):
+        """Process incoming Instagram media message"""
+        try:
+            logger.info(f"🎬 Media message from @{sender_username}: {message.media_type}")
+            
+            # Check if user is bound
+            if self._is_bound_user(sender_username):
+                # Handle content delivery for media
+                await self._handle_content_delivery(sender_username, message)
+            else:
+                # Send help message for unbound users
+                if sender_username not in self.help_sent_users:
+                    await self._send_help_message(sender_username)
+                    self.help_sent_users.add(sender_username)
+                    self._record_message_sent(sender_username)
+                    logger.info(f"📝 Help message sent to @{sender_username} for media (first time)")
+                else:
+                    logger.info(f"🤐 Skipping media message for @{sender_username} (already sent help)")
+                    
+        except Exception as e:
+            logger.error(f"Error processing media message: {e}")
+            # Send a generic error message
+            try:
+                await self._send_dm(sender_username, "❌ Sorry, there was an error processing your media. Please try again.")
+            except:
+                pass
     
     def _is_binding_code(self, text: str) -> bool:
         """Check if text looks like a binding code"""
@@ -254,10 +290,8 @@ class InstagramBotService:
     
     def _is_bound_user(self, username: str) -> bool:
         """Check if Instagram user is bound to any Telegram account"""
-        for telegram_id, instagram_user in shared_binding_system.active_bindings.items():
-            if instagram_user == username:
-                return True
-        return False
+        # Use the shared binding system method
+        return shared_binding_system.is_bound_user(username)
     
     async def _send_dm(self, username: str, message: str):
         """Send direct message to user with rate limiting"""
@@ -284,7 +318,7 @@ class InstagramBotService:
         )
         await self._send_dm(username, help_message)
     
-    async def _handle_content_delivery(self, username: str, content: str):
+    async def _handle_content_delivery(self, username: str, message_data):
         """Handle content delivery from bound user"""
         try:
             # Find bound Telegram user
@@ -296,14 +330,136 @@ class InstagramBotService:
             
             if telegram_id:
                 logger.info(f"📦 Content delivery: @{username} -> Telegram {telegram_id}")
-                # Here you would integrate with your Telegram bot to send the content
-                # For now, just log it
+                
+                # Check if this is media content
+                if hasattr(message_data, 'media_type') and message_data.media_type:
+                    await self._process_media_content(username, telegram_id, message_data)
+                else:
+                    # Text content
+                    await self._process_text_content(username, telegram_id, message_data.text)
+                    
+                # Send confirmation
                 await self._send_dm(username, "✅ Content received! It will be delivered to your Telegram account.")
             else:
                 logger.warning(f"User @{username} not found in active bindings")
                 
         except Exception as e:
             logger.error(f"Error handling content delivery: {e}")
+            await self._send_dm(username, "❌ Sorry, there was an error processing your content. Please try again.")
+
+    async def _process_media_content(self, username: str, telegram_id: int, message_data):
+        """Process media content (reels, videos, images) and send to Telegram"""
+        try:
+            logger.info(f"🎬 Processing media content from @{username} for Telegram {telegram_id}")
+            
+            # Get media info
+            media_type = message_data.media_type
+            media_id = message_data.id
+            
+            if media_type in ['REEL', 'VIDEO', 'CLIP']:
+                await self._process_video_content(username, telegram_id, media_id)
+            elif media_type in ['PHOTO', 'IMAGE']:
+                await self._process_image_content(username, telegram_id, media_id)
+            else:
+                logger.info(f"📱 Unsupported media type: {media_type}")
+                
+        except Exception as e:
+            logger.error(f"Error processing media content: {e}")
+
+    async def _process_video_content(self, username: str, telegram_id: int, media_id: int):
+        """Process video content and send to Telegram"""
+        try:
+            logger.info(f"🎥 Processing video content {media_id} from @{username}")
+            
+            # Get video info
+            video_info = self.client.media_info(media_id)
+            
+            # Download video
+            video_path = self.client.media_download(media_id, folder="/tmp")
+            
+            if video_path and os.path.exists(video_path):
+                logger.info(f"📥 Video downloaded: {video_path}")
+                
+                # Send to Telegram via webhook or direct API call
+                await self._send_to_telegram(telegram_id, video_path, "video", username)
+                
+                # Clean up
+                os.remove(video_path)
+            else:
+                logger.error(f"Failed to download video {media_id}")
+                
+        except Exception as e:
+            logger.error(f"Error processing video content: {e}")
+
+    async def _process_image_content(self, username: str, telegram_id: int, media_id: int):
+        """Process image content and send to Telegram"""
+        try:
+            logger.info(f"🖼️ Processing image content {media_id} from @{username}")
+            
+            # Get image info
+            image_info = self.client.media_info(media_id)
+            
+            # Download image
+            image_path = self.client.media_download(media_id, folder="/tmp")
+            
+            if image_path and os.path.exists(image_path):
+                logger.info(f"📥 Image downloaded: {image_path}")
+                
+                # Send to Telegram via webhook or direct API call
+                await self._send_to_telegram(telegram_id, image_path, "photo", username)
+                
+                # Clean up
+                os.remove(image_path)
+            else:
+                logger.error(f"Failed to download image {media_id}")
+                
+        except Exception as e:
+            logger.error(f"Error processing image content: {e}")
+
+    async def _process_text_content(self, username: str, telegram_id: int, text: str):
+        """Process text content and send to Telegram"""
+        try:
+            logger.info(f"📝 Processing text content from @{username}: {text[:50]}...")
+            
+            # Send text to Telegram
+            await self._send_to_telegram(telegram_id, text, "text", username)
+            
+        except Exception as e:
+            logger.error(f"Error processing text content: {e}")
+
+    async def _send_to_telegram(self, telegram_id: int, content, content_type: str, username: str):
+        """Send content to Telegram user via webhook or direct API"""
+        try:
+            # Get Telegram bot token from environment
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            if not bot_token:
+                logger.error("Telegram bot token not configured")
+                return
+            
+            # Prepare message data
+            message_data = {
+                "telegram_user_id": telegram_id,
+                "instagram_username": username,
+                "content_type": content_type,
+                "content": content if content_type == "text" else None,
+                "file_path": content if content_type != "text" else None,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Send to Telegram bot via webhook or direct API
+            # For now, we'll use a simple HTTP request to the web endpoint
+            webhook_url = os.getenv('WEBHOOK_URL', 'http://localhost:5000')
+            
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{webhook_url}/instagram-content", json=message_data) as response:
+                    if response.status == 200:
+                        logger.info(f"✅ Content sent to Telegram user {telegram_id}")
+                    else:
+                        logger.error(f"Failed to send content to Telegram: {response.status}")
+                        
+        except Exception as e:
+            logger.error(f"Error sending content to Telegram: {e}")
 
 async def main():
     """Main function to run the Instagram bot service"""
