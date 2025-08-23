@@ -7,7 +7,7 @@ Provides comprehensive monitoring and metrics for production deployment
 import time
 import logging
 from typing import Dict, Any, Optional
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter as CollectionsCounter
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -176,7 +176,7 @@ class MetricsCollector:
         self.user_sessions = defaultdict(dict)
         self.download_history = []
         self.error_history = []
-        self.platform_stats = Counter()
+        self.platform_stats = CollectionsCounter()  # Python built-in Counter for internal tracking
         
         logger.info("Metrics collector initialized")
     
@@ -371,7 +371,7 @@ class MetricsCollector:
             platform_breakdown = dict(self.platform_stats)
             
             # Error breakdown
-            error_breakdown = Counter([e['type'] for e in self.error_history])
+            error_breakdown = CollectionsCounter([e['type'] for e in self.error_history])
             
             return {
                 'total_downloads': total_downloads,
