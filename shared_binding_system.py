@@ -8,7 +8,7 @@ Uses Supabase database for true persistence across dyno restarts
 import os
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Set
 import requests
 import time
 
@@ -32,6 +32,9 @@ class SharedBindingSystem:
 
         # Active bindings cache (telegram_id -> instagram_username)
         self.active_bindings: Dict[int, str] = {}
+        
+        # Processed codes cache to prevent duplicate processing
+        self.processed_codes: Set[str] = set()
         
         # Check if Supabase is configured
         if not self.supabase_url or not self.supabase_key:
@@ -272,6 +275,11 @@ class SharedBindingSystem:
         try:
             logger.info(f"🔍 Processing binding code: {code} for Instagram user: {instagram_username}")
 
+            # Check if code was already processed (prevent duplicate processing)
+            if code in self.processed_codes:
+                logger.info(f"ℹ️ Code {code} already processed, skipping")
+                return {'success': False, 'error': 'Code already processed'}
+
             if self.use_database:
                 # Query Supabase for the code
                 logger.info(f"🔍 Querying database for code: {code}")
@@ -287,23 +295,31 @@ class SharedBindingSystem:
                 # Check if code is already used
                 if binding_data.get('is_used', False):
                     logger.warning(f"❌ Code {code} already used")
+                    # Add to processed codes to prevent future processing
+                    self.processed_codes.add(code)
                     return {'success': False, 'error': 'Binding code already used'}
 
                 # Check expiration
                 expires_at = datetime.fromisoformat(binding_data['expires_at'].replace('Z', '+00:00'))
                 if datetime.now(timezone.utc) > expires_at:
                     logger.warning(f"⏰ Binding code {code} has expired")
+                    # Add to processed codes to prevent future processing
+                    self.processed_codes.add(code)
                     return {'success': False, 'error': 'Binding code has expired'}
 
                 # Check if Instagram user is already bound
                 if self._is_bound_user(instagram_username):
                     logger.warning(f"❌ Instagram user @{instagram_username} already bound")
+                    # Add to processed codes to prevent future processing
+                    self.processed_codes.add(code)
                     return {'success': False, 'error': 'Instagram account already bound to another user'}
 
                 # Check if Telegram user is already bound
                 telegram_id = binding_data['telegram_user_id']
                 if self._has_active_binding(telegram_id):
                     logger.warning(f"❌ Telegram user {telegram_id} already bound")
+                    # Add to processed codes to prevent future processing
+                    self.processed_codes.add(code)
                     return {'success': False, 'error': 'Telegram account already bound'}
 
                 # Mark code as used
@@ -326,6 +342,9 @@ class SharedBindingSystem:
 
                     # Update active bindings cache
                     self.active_bindings[telegram_id] = instagram_username
+
+                    # Add to processed codes to prevent future processing
+                    self.processed_codes.add(code)
 
                     return {
                         'success': True,

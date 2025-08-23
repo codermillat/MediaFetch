@@ -206,9 +206,12 @@ class InstagramBotService:
                     await self._send_dm(sender_username, result['message'])
                     logger.info(f"✅ Binding successful: {sender_username} -> {result['telegram_id']}")
                 else:
-                    # Send error message
-                    await self._send_dm(sender_username, f"❌ {result['error']}")
-                    logger.warning(f"❌ Binding failed: {sender_username} - {result['error']}")
+                    # Only send error message if it's not a duplicate processing
+                    if result['error'] != 'Code already processed':
+                        await self._send_dm(sender_username, f"❌ {result['error']}")
+                        logger.warning(f"❌ Binding failed: {sender_username} - {result['error']}")
+                    else:
+                        logger.info(f"ℹ️ Skipping duplicate binding code: {message_text}")
                 return
             
             # Check if it's a command
@@ -365,6 +368,45 @@ class InstagramBotService:
                 
         except Exception as e:
             logger.error(f"Error processing media content: {e}")
+
+    async def _handle_media_delivery(self, username: str, media, telegram_id: int):
+        """Handle media content delivery (reels, videos, images)"""
+        try:
+            logger.info(f"📸 Processing media from @{username} for Telegram {telegram_id}")
+            
+            # Extract media information
+            media_type = getattr(media, 'media_type', 'unknown')
+            media_id = getattr(media, 'id', None)
+            
+            if not media_id:
+                logger.warning(f"❌ No media ID found for {media_type} from @{username}")
+                return
+            
+            # Process based on media type
+            if media_type in ['VIDEO', 'REEL']:
+                await self._process_video_content(username, telegram_id, media_id)
+            elif media_type in ['PHOTO', 'IMAGE']:
+                await self._process_image_content(username, telegram_id, media_id)
+            else:
+                logger.info(f"📱 Processing {media_type} content from @{username}")
+                # Try to download as generic media
+                media_path = self.client.media_download(media_id, folder="/tmp")
+                if media_path and os.path.exists(media_path):
+                    await self._send_to_telegram(telegram_id, media_path, media_type.lower(), username)
+                    os.remove(media_path)
+                    
+        except Exception as e:
+            logger.error(f"Error handling media delivery: {e}")
+            await self._send_dm(username, "❌ Sorry, there was an error processing your media. Please try again.")
+
+    async def _handle_text_delivery(self, username: str, text: str, telegram_id: int):
+        """Handle text content delivery"""
+        try:
+            logger.info(f"📝 Processing text content from @{username} for Telegram {telegram_id}")
+            await self._process_text_content(username, telegram_id, text)
+        except Exception as e:
+            logger.error(f"Error handling text delivery: {e}")
+            await self._send_dm(username, "❌ Sorry, there was an error processing your text. Please try again.")
 
     async def _process_video_content(self, username: str, telegram_id: int, media_id: int):
         """Process video content and send to Telegram"""
