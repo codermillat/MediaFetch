@@ -6,18 +6,13 @@ Production-ready bot with proper error handling, validation, and monitoring
 
 import os
 import logging
-import asyncio
-import tempfile
-import shutil
-from typing import Optional, Dict, Any
-from pathlib import Path
+from typing import Dict, Any, List
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters
 )
-from telegram.error import TelegramError
 
 from .config import Config
 from .media_downloader import MediaDownloader
@@ -25,7 +20,7 @@ from .media_processor import MediaProcessor
 from .metrics import MetricsCollector
 from .instagram_client import InstagramClient
 from .instagram_monitor import InstagramMonitor
-from .utils import validate_url, sanitize_filename
+from .utils import validate_url
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +77,8 @@ class MediaFetchBot:
     
     async def _start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user = update.effective_user
         user_id = user.id
         
@@ -110,6 +107,7 @@ class MediaFetchBot:
     
     async def _help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
+        assert update.message is not None
         help_text = (
             "🔧 **MediaFetch Bot Help**\n\n"
             "**Basic Commands:**\n"
@@ -150,6 +148,8 @@ class MediaFetchBot:
     
     async def _status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         session = self.user_sessions.get(user_id, {})
         
@@ -166,6 +166,8 @@ class MediaFetchBot:
     
     async def _cancel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /cancel command"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         session = self.user_sessions.get(user_id, {})
         
@@ -179,6 +181,7 @@ class MediaFetchBot:
     
     async def _instagram_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /instagram command for Instagram-related operations"""
+        assert update.message is not None
         if not self.instagram_client.is_token_valid():
             await update.message.reply_text(
                 "❌ Instagram integration not configured. "
@@ -219,6 +222,7 @@ class MediaFetchBot:
     
     async def _monitor_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /monitor command to start monitoring Instagram accounts"""
+        assert update.message is not None
         if not context.args:
             await update.message.reply_text(
                 "📊 **Monitoring Commands**\n\n"
@@ -243,6 +247,7 @@ class MediaFetchBot:
     
     async def _unmonitor_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /unmonitor command to stop monitoring accounts"""
+        assert update.message is not None
         if not context.args:
             await update.message.reply_text(
                 "❌ Please specify a username to stop monitoring.\n"
@@ -256,6 +261,8 @@ class MediaFetchBot:
     
     async def _handle_instagram_profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle Instagram profile command"""
+        assert update.message is not None
+        assert context.args is not None
         if len(context.args) < 2:
             await update.message.reply_text(
                 "❌ Please specify a username.\n"
@@ -284,6 +291,8 @@ class MediaFetchBot:
     
     async def _handle_instagram_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle Instagram media command"""
+        assert update.message is not None
+        assert context.args is not None
         if len(context.args) < 2:
             await update.message.reply_text(
                 "❌ Please specify a username.\n"
@@ -309,6 +318,8 @@ class MediaFetchBot:
     
     async def _handle_instagram_stories(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle Instagram stories command"""
+        assert update.message is not None
+        assert context.args is not None
         if len(context.args) < 2:
             await update.message.reply_text(
                 "❌ Please specify a username.\n"
@@ -332,6 +343,9 @@ class MediaFetchBot:
     
     async def _handle_instagram_monitor(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle Instagram monitor command"""
+        assert update.message is not None
+        assert context.args is not None
+        assert update.effective_user is not None
         if len(context.args) < 2:
             await update.message.reply_text(
                 "❌ Please specify a username to monitor.\n"
@@ -362,6 +376,8 @@ class MediaFetchBot:
     
     async def _handle_instagram_insights(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle Instagram insights command"""
+        assert update.message is not None
+        assert context.args is not None
         if len(context.args) < 2:
             await update.message.reply_text(
                 "❌ Please specify a username.\n"
@@ -391,6 +407,8 @@ class MediaFetchBot:
     
     async def _handle_monitor_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle monitor list command"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         
         if user_id not in self.monitored_accounts or not self.monitored_accounts[user_id]:
@@ -408,6 +426,8 @@ class MediaFetchBot:
     
     async def _handle_monitor_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle monitor check command"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         
         if user_id not in self.monitored_accounts or not self.monitored_accounts[user_id]:
@@ -439,6 +459,9 @@ class MediaFetchBot:
     
     async def _handle_monitor_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle adding an account to monitor"""
+        assert update.message is not None
+        assert context.args is not None
+        assert update.effective_user is not None
         username = context.args[0].lower()
         user_id = update.effective_user.id
         
@@ -461,6 +484,8 @@ class MediaFetchBot:
     
     async def _handle_unmonitor(self, update: Update, context: ContextTypes.DEFAULT_TYPE, username: str):
         """Handle unmonitor command"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         
         if user_id not in self.monitored_accounts:
@@ -478,6 +503,7 @@ class MediaFetchBot:
     
     async def _auto_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /auto command for automatic content delivery"""
+        assert update.message is not None
         if not context.args:
             await update.message.reply_text(
                 "🤖 **Automatic Content Delivery**\n\n"
@@ -515,6 +541,7 @@ class MediaFetchBot:
     
     async def _preferences_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /preferences command for user preferences"""
+        assert update.message is not None
         if not context.args:
             await update.message.reply_text(
                 "⚙️ **User Preferences**\n\n"
@@ -549,6 +576,8 @@ class MediaFetchBot:
     
     async def _handle_auto_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start automatic Instagram monitoring"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         
         # Check if user has any monitored accounts
@@ -587,6 +616,8 @@ class MediaFetchBot:
     
     async def _handle_auto_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Stop automatic Instagram monitoring"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         
         try:
@@ -613,6 +644,8 @@ class MediaFetchBot:
     
     async def _handle_auto_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show automatic monitoring status"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         
         # Get user's monitoring status
@@ -640,6 +673,9 @@ class MediaFetchBot:
     
     async def _handle_auto_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Force check a specific account"""
+        assert update.message is not None
+        assert context.args is not None
+        assert update.effective_user is not None
         if len(context.args) < 2:
             await update.message.reply_text(
                 "❌ Please specify an account to check.\n"
@@ -679,6 +715,7 @@ class MediaFetchBot:
     
     async def _handle_auto_preferences(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Set automatic delivery preferences"""
+        assert update.message is not None
         await update.message.reply_text(
             "⚙️ **Automatic Delivery Preferences**\n\n"
             "Use these commands to customize your experience:\n\n"
@@ -694,6 +731,9 @@ class MediaFetchBot:
     
     async def _handle_content_preferences(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle content type preferences"""
+        assert update.message is not None
+        assert context.args is not None
+        assert update.effective_user is not None
         if len(context.args) < 3:
             await update.message.reply_text(
                 "❌ Please specify content type and setting.\n"
@@ -733,6 +773,9 @@ class MediaFetchBot:
     
     async def _handle_notification_preferences(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle notification preferences"""
+        assert update.message is not None
+        assert context.args is not None
+        assert update.effective_user is not None
         if len(context.args) < 3:
             await update.message.reply_text(
                 "❌ Please specify notification type and setting.\n"
@@ -772,6 +815,8 @@ class MediaFetchBot:
     
     async def _handle_view_preferences(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """View current user preferences"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         user_status = self.instagram_monitor.get_user_monitoring_status(user_id)
         
@@ -807,6 +852,8 @@ class MediaFetchBot:
     
     async def _handle_reset_preferences(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Reset user preferences to defaults"""
+        assert update.message is not None
+        assert update.effective_user is not None
         user_id = update.effective_user.id
         
         # Reset to default preferences
@@ -835,6 +882,9 @@ class MediaFetchBot:
     
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages (media links)"""
+        assert update.message is not None
+        assert update.effective_user is not None
+        assert update.message.text is not None
         user_id = update.effective_user.id
         message_text = update.message.text.strip()
         
@@ -859,12 +909,13 @@ class MediaFetchBot:
     async def _process_download(self, update: Update, context: ContextTypes.DEFAULT_TYPE, 
                                url: str, user_id: int):
         """Process media download with proper error handling"""
+        assert update.message is not None
         session = self.user_sessions.get(user_id, {})
         session['state'] = 'downloading'
         session['current_download'] = url
         
         # Send initial response
-        status_message = await update.message.reply_text(
+        await update.message.reply_text(
             f"🔄 Processing your media link...\n\n"
             f"📎 URL: {url}\n"
             f"⏱️ This may take a few moments..."
@@ -911,6 +962,7 @@ class MediaFetchBot:
     async def _send_media_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE, 
                               file_path: str, download_info: Dict[str, Any]):
         """Send media file to user with proper formatting"""
+        assert update.message is not None
         try:
             file_size = download_info.get('file_size', 0)
             title = download_info.get('title', 'Unknown')
@@ -953,6 +1005,7 @@ class MediaFetchBot:
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle callback queries from inline keyboards"""
         query = update.callback_query
+        assert query is not None
         await query.answer()
         
         # Handle different callback actions
@@ -961,12 +1014,12 @@ class MediaFetchBot:
         elif query.data == 'status':
             await self._status_command(update, context)
     
-    async def _error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Handle errors gracefully"""
         logger.error(f"Exception while handling an update: {context.error}")
         
         # Send user-friendly error message
-        if update and update.effective_message:
+        if isinstance(update, Update) and update.effective_message:
             await update.effective_message.reply_text(
                 "❌ An error occurred while processing your request. "
                 "Please try again later or contact support if the problem persists."
@@ -974,7 +1027,7 @@ class MediaFetchBot:
         
         self.metrics.increment_errors()
     
-    async def _cleanup_files(self, file_paths: list):
+    async def _cleanup_files(self, file_paths: List[str]):
         """Clean up temporary files"""
         for file_path in file_paths:
             try:

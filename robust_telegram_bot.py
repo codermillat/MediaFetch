@@ -6,13 +6,16 @@ Handles connection issues and network problems gracefully
 
 import os
 import logging
-import asyncio
 import time
 from dotenv import load_dotenv
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import TimedOut, NetworkError, RetryAfter
+
+# Import security modules
+from security_utils import SecurityUtils
+from input_validation import InputValidator, ValidationError
 
 # Load environment variables from .env file
 load_dotenv()
@@ -31,6 +34,8 @@ if not BOT_TOKEN:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
+    assert update.message is not None
+    assert update.effective_user is not None
     user = update.effective_user
     
     welcome_text = (
@@ -63,15 +68,24 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in start command: {e}")
 
 async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /bind command - generates unique binding code"""
+    """Handle /bind command - generates unique binding code with enhanced security"""
+    assert update.message is not None
+    assert update.effective_user is not None
     user = update.effective_user
-    
-    # Generate unique binding code
-    import secrets
-    import string
-    characters = string.ascii_uppercase + string.digits
-    characters = characters.replace('0', '').replace('O', '').replace('1', '').replace('I', '')
-    binding_code = ''.join(secrets.choice(characters) for _ in range(8))
+
+    # Rate limiting check for security
+    user_key = f"bind_{user.id}"
+    if not SecurityUtils.rate_limit_check(user_key, 3, 3600, {}):  # 3 attempts per hour
+        await update.message.reply_text(
+            "❌ **Rate Limit Exceeded**\n\n"
+            "You can only request 3 binding codes per hour.\n"
+            "Please wait before trying again.",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Generate secure binding code using SecurityUtils
+    binding_code = SecurityUtils.generate_secure_token(6).upper()[:8]  # 8 character code
     
     binding_message = (
         f"✅ **Binding Code Generated!**\n\n"
@@ -94,7 +108,7 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from shared_binding_system import shared_binding_system
             
             # Try to add the binding code
-            result = shared_binding_system.add_pending_binding(binding_code, user.id, None)
+            result = shared_binding_system.add_pending_binding(binding_code, user.id)
             
             if result['success']:
                 logger.info(f"Binding code {binding_code} added to shared binding system for user {user.id}")
@@ -135,6 +149,8 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def bindings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /bindings command"""
+    assert update.message is not None
+    assert update.effective_user is not None
     try:
         from shared_binding_system import shared_binding_system
         user_id = update.effective_user.id
@@ -183,6 +199,9 @@ async def bindings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /unbind command"""
+    assert update.message is not None
+    assert update.effective_user is not None
+    assert context.args is not None
     try:
         from shared_binding_system import shared_binding_system
         user_id = update.effective_user.id
@@ -200,7 +219,7 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # If no username specified, show current bindings
         if not context.args:
-            bindings_list = "\n".join([f"• @{username}" for username in current_bindings])
+            bindings_list = "\n".join([f"• @{binding.get('instagram_username')}" for binding in current_bindings])
             await update.message.reply_text(
                 f"📱 **Your Current Bindings**\n\n"
                 f"{bindings_list}\n\n"
@@ -215,8 +234,9 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Handle "all" case
         if target_username.lower() == "all":
             removed_count = 0
-            for username in current_bindings:
-                if shared_binding_system.remove_binding(user_id, username):
+            for binding in current_bindings:
+                username = binding.get("instagram_username")
+                if username and shared_binding_system.remove_user_binding(user_id, username):
                     removed_count += 1
             
             await update.message.reply_text(
@@ -230,7 +250,7 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if target_username.startswith('@'):
             target_username = target_username[1:]  # Remove @ symbol
         
-        if shared_binding_system.remove_binding(user_id, target_username):
+        if shared_binding_system.remove_user_binding(user_id, target_username):
             await update.message.reply_text(
                 f"✅ **Binding Removed**\n\n"
                 f"Successfully removed binding with @{target_username}.\n\n"
@@ -255,6 +275,7 @@ async def unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
+    assert update.message is not None
     help_text = (
         "❓ **MediaFetch Help**\n\n"
         "**Instagram Binding Commands:**\n"
@@ -279,6 +300,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text messages"""
+    assert update.message is not None
+    assert update.message.text is not None
     text = update.message.text
     
     # Check if it's a URL
@@ -312,6 +335,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle callback queries from inline keyboards"""
     query = update.callback_query
+    assert query is not None
     try:
         await query.answer()
         
@@ -353,6 +377,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cleanup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /cleanup command - Admin only"""
+    assert update.message is not None
+    assert update.effective_user is not None
     try:
         from shared_binding_system import shared_binding_system
         
@@ -381,7 +407,7 @@ async def cleanup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in cleanup command: {e}")
         await update.message.reply_text("❌ Error during cleanup process.")
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors gracefully"""
     logger.error(f"Exception while handling an update: {context.error}")
     
@@ -401,40 +427,33 @@ def main():
         try:
             logger.info(f"🚀 Starting MediaFetch Telegram Bot (Production) - Attempt {attempt + 1}/{max_retries}")
             
-            # Create application with custom settings
-            application = (
-                Application.builder()
-                .token(BOT_TOKEN)
-                .read_timeout(30)
-                .write_timeout(30)
-                .connect_timeout(30)
-                .pool_timeout(30)
-                .build()
-            )
+            from telegram_media_bot.bot import MediaFetchBot
+            
+            bot = MediaFetchBot()
             
             # Add handlers
-            application.add_handler(CommandHandler("start", start_command))
-            application.add_handler(CommandHandler("bind", bind_command))
-            application.add_handler(CommandHandler("bindings", bindings_command))
-            application.add_handler(CommandHandler("unbind", unbind_command)) # Added unbind handler
-            application.add_handler(CommandHandler("help", help_command))
-            application.add_handler(CommandHandler("cleanup", cleanup_command))
+            bot.application.add_handler(CommandHandler("start", start_command))
+            bot.application.add_handler(CommandHandler("bind", bind_command))
+            bot.application.add_handler(CommandHandler("bindings", bindings_command))
+            bot.application.add_handler(CommandHandler("unbind", unbind_command)) # Added unbind handler
+            bot.application.add_handler(CommandHandler("help", help_command))
+            bot.application.add_handler(CommandHandler("cleanup", cleanup_command))
             
             # Add message handler
-            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+            bot.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
             
             # Add callback query handler
-            application.add_handler(CallbackQueryHandler(handle_callback))
+            bot.application.add_handler(CallbackQueryHandler(handle_callback))
             
             # Add error handler
-            application.add_error_handler(error_handler)
+            bot.application.add_error_handler(error_handler)
             
             logger.info("✅ Bot handlers configured")
             logger.info("✅ Bot starting...")
             logger.info("✅ Ready to receive messages!")
             
             # Start the bot with rate limiting
-            application.run_polling(
+            bot.application.run_polling(
                 drop_pending_updates=True,
                 allowed_updates=Update.ALL_TYPES,
                 poll_interval=2.0,  # Poll every 2 seconds instead of continuously

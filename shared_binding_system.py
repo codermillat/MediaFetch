@@ -6,10 +6,9 @@ Uses Supabase database for true persistence across dyno restarts
 """
 
 import os
-import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 import requests
 import time
 
@@ -28,7 +27,7 @@ class SharedBindingSystem:
         self.min_request_interval = 1.0  # Minimum 1 second between requests
         
         # User state tracking
-        self.user_binding_attempts = {}  # Track binding attempts per user
+        self.user_binding_attempts: Dict[int, List[float]] = {}  # Track binding attempts per user
         self.max_binding_attempts = 3  # Max attempts per hour
         
         # Check if Supabase is configured
@@ -47,7 +46,7 @@ class SharedBindingSystem:
             time.sleep(sleep_time)
         self.last_request_time = time.time()
 
-    def _make_supabase_request(self, method: str, endpoint: str, data: dict = None) -> dict:
+    def _make_supabase_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Any:
         """Make rate-limited HTTP request to Supabase"""
         try:
             self._rate_limit()  # Rate limit all requests
@@ -110,7 +109,7 @@ class SharedBindingSystem:
             self.user_binding_attempts[telegram_id] = []
         self.user_binding_attempts[telegram_id].append(time.time())
 
-    def add_pending_binding(self, code: str, telegram_id: int, username: str = None) -> Dict:
+    def add_pending_binding(self, code: str, telegram_id: int, username: Optional[str] = None) -> Dict[str, Any]:
         """Add a new pending binding code with comprehensive validation"""
         try:
             # Check if user already has an active binding
@@ -145,7 +144,7 @@ class SharedBindingSystem:
                     'code': 'CODE_EXISTS'
                 }
             
-            expires_at = datetime.utcnow().replace(tzinfo=timezone.utc) + timedelta(hours=24)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
             
             if self.use_database:
                 # Store in Supabase
@@ -154,7 +153,7 @@ class SharedBindingSystem:
                     'telegram_user_id': telegram_id,
                     'instagram_username': username,
                     'expires_at': expires_at.isoformat(),
-                    'created_at': datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+                    'created_at': datetime.now(timezone.utc).isoformat()
                 }
                 
                 result = self._make_supabase_request('POST', 'binding_codes', data)
@@ -202,7 +201,7 @@ class SharedBindingSystem:
     def _has_pending_binding(self, telegram_id: int) -> bool:
         """Check if user already has a pending binding code"""
         if self.use_database:
-            current_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+            current_time = datetime.now(timezone.utc).isoformat()
             result = self._make_supabase_request('GET', f'binding_codes?telegram_user_id=eq.{telegram_id}&expires_at=gt.{current_time}')
             return result is not None and len(result) > 0
         return False
@@ -214,7 +213,7 @@ class SharedBindingSystem:
             return result is not None and len(result) > 0
         return False
 
-    def process_binding_code(self, code: str, instagram_username: str) -> Dict:
+    def process_binding_code(self, code: str, instagram_username: str) -> Dict[str, Any]:
         """Process a binding code from Instagram with comprehensive validation"""
         try:
             logger.info(f"🔍 Processing binding code: {code} for Instagram user: {instagram_username}")
@@ -238,7 +237,7 @@ class SharedBindingSystem:
 
                 # Check expiration
                 expires_at = datetime.fromisoformat(binding_data['expires_at'].replace('Z', '+00:00'))
-                if datetime.utcnow().replace(tzinfo=timezone.utc) > expires_at:
+                if datetime.now(timezone.utc) > expires_at:
                     logger.warning(f"⏰ Binding code {code} has expired")
                     return {'success': False, 'error': 'Binding code has expired'}
 
@@ -263,7 +262,7 @@ class SharedBindingSystem:
                     'telegram_user_id': telegram_id,
                     'instagram_username': instagram_username,
                     'binding_code': code,
-                    'bound_at': datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+                    'bound_at': datetime.now(timezone.utc).isoformat(),
                     'is_active': True
                 }
 
@@ -305,19 +304,26 @@ class SharedBindingSystem:
             return None
         return None
 
-    def get_user_bindings(self, telegram_id: int) -> List[Dict]:
+    def get_user_bindings(self, telegram_id: int) -> List[Dict[str, Any]]:
         """Get all bindings for a Telegram user"""
         if self.use_database:
             result = self._make_supabase_request('GET', f'user_bindings?telegram_user_id=eq.{telegram_id}&is_active=eq.true')
             return result if result else []
         return []
 
+    def remove_user_binding(self, telegram_id: int, instagram_username: str) -> bool:
+        """Remove a specific binding for a user"""
+        if self.use_database:
+            result = self._make_supabase_request('DELETE', f'user_bindings?telegram_user_id=eq.{telegram_id}&instagram_username=eq.{instagram_username}')
+            return result is not None and result.get('success', False)
+        return False
+
     def cleanup_expired_bindings(self):
         """Clean up expired binding codes"""
         try:
             if self.use_database:
                 # Clean up expired codes in database
-                current_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
+                current_time = datetime.now(timezone.utc).isoformat()
                 expired_codes = self._make_supabase_request('GET', f'binding_codes?expires_at=lt.{current_time}')
                 
                 if expired_codes:

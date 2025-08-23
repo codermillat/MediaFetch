@@ -1,4 +1,4 @@
-# Core dependencies
+# Core dependencies - Updated and pinned
 python-telegram-bot==20.7
 yt-dlp==2023.12.30
 ffmpeg-python==0.2.0
@@ -13,7 +13,7 @@ requests==2.31.0
 
 # Instagram 3rd party client for DM access
 instagrapi==2.0.0
-Pillow>=8.1.1
+Pillow==10.2.0
 
 # Monitoring and metrics
 prometheus-client==0.19.0
@@ -26,8 +26,18 @@ python-dotenv==1.0.0
 # Database
 supabase==2.3.4
 
+# Security and validation
+bleach==6.1.0
+pybreaker==1.1.0  # Circuit breaker library
+
 # Development and testing (optional)
 pytest==7.4.3
 pytest-asyncio==0.21.1
 black==23.12.0
 flake8==6.1.0
+mypy==1.8.0  # Type checking
+
+# Additional utilities for improvements
+redis==5.0.1  # For caching (optional)
+cryptography==42.0.4  # Enhanced security
+validators==0.22.0  # URL validation
